@@ -1,0 +1,47 @@
+name: Self-Healing Diagnostics
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  collect-failure:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download failed run logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          mkdir -p diagnostics
+          gh run view "$RUN_ID" --log-failed > diagnostics/failed-steps.log || true
+          gh run view "$RUN_ID" --json name,headSha,headBranch,status,conclusion,createdAt,updatedAt > diagnostics/run.json
+          gh run view "$RUN_ID" --json jobs > diagnostics/jobs.json
+
+      - name: Create failure summary
+        run: |
+          {
+            echo "# CI failure diagnostics"
+            echo
+            echo "- Run: ${{ github.event.workflow_run.html_url }}"
+            echo "- Commit: ${{ github.event.workflow_run.head_sha }}"
+            echo "- Branch: ${{ github.event.workflow_run.head_branch }}"
+            echo
+            echo "## Failed log"
+            echo '```text'
+            cat diagnostics/failed-steps.log
+            echo '```'
+          } > diagnostics/README.md
+
+      - name: Upload diagnostics artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-failure-${{ github.event.workflow_run.id }}
+          path: diagnostics/
+          retention-days: 14

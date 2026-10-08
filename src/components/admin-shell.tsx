@@ -4,14 +4,11 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocale } from "@/components/locale-provider";
+import { useBusinessMode } from "@/components/business-mode-provider";
 import clsx from "clsx";
 import {
   LayoutDashboard,
-  IndianRupee,
-  Layers,
   Package,
-  FileText,
-  BookOpen,
   BarChart3,
   Download,
   LogOut,
@@ -21,26 +18,35 @@ import {
   Bell,
   Menu,
   X,
-  ExternalLink,
   Command,
-  Plus,
   HardDrive,
   LineChart,
+  Users,
+  WalletCards,
+  Factory,
 } from "lucide-react";
 import "@/app/admin-theme.css";
 
-const nav = [
-  { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/admin/rates", label: "Rates", icon: IndianRupee },
-  { href: "/admin/materials", label: "Materials", icon: Package },
-  { href: "/admin/categories", label: "Categories", icon: Layers },
-  { href: "/admin/articles", label: "Articles", icon: FileText },
-  { href: "/admin/content", label: "About Content", icon: BookOpen },
-  { href: "/admin/analytics", label: "Analytics", icon: BarChart3 },
-  { href: "/admin/reports", label: "Reports", icon: Download },
-  { href: "/admin/report-analysis", label: "Month analysis", icon: LineChart },
-  { href: "/admin/backup", label: "Backup", icon: HardDrive },
-];
+const navByMode = {
+  PET: [
+    { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
+    { href: "/admin/inventory", label: "PET Inventory", icon: Package },
+    { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
+    { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
+    { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
+    { href: "/admin/processing", label: "Labour Management", icon: Factory },
+  ],
+  PLASTIC: [
+    { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },
+    { href: "/admin/inventory", label: "Plastic Inventory & Finance", icon: Package },
+    { href: "/admin/analytics", label: "Plastic Analytics", icon: BarChart3 },
+    { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
+    { href: "/admin/reports", label: "Plastic Reports", icon: Download },
+    { href: "/admin/report-analysis", label: "Plastic Month Analysis", icon: LineChart },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
+    { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
+  ],
+} as const;
 
 type Toast = { id: number; text: string };
 
@@ -68,15 +74,16 @@ export function AdminShell({
   username?: string;
 }) {
   const { dict, locale, setLocale } = useLocale();
+  const { mode, setMode } = useBusinessMode();
   const pathname = usePathname();
   const router = useRouter();
   const [dark, setDark] = useState(true);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [cmdQ, setCmdQ] = useState("");
-  const [fabOpen, setFabOpen] = useState(false);
   const [toasts, setToasts] = useState<Toast[]>([]);
   const owner = process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
+  const nav = navByMode[mode];
 
   useEffect(() => {
     const saved = localStorage.getItem("navrit-admin-theme");
@@ -110,7 +117,7 @@ export function AdminShell({
       (n) => n.href === pathname || (n.href !== "/admin" && pathname.startsWith(n.href))
     );
     return item?.label || "Admin";
-  }, [pathname]);
+  }, [pathname, nav]);
 
   const filteredNav = nav.filter((n) =>
     n.label.toLowerCase().includes(cmdQ.trim().toLowerCase())
@@ -131,7 +138,6 @@ export function AdminShell({
   return (
     <div className={clsx("admin-app", !dark && "admin-light")}>
       <div className="flex min-h-screen">
-        {/* Sidebar desktop */}
         <aside className="ad-sidebar sticky top-0 hidden h-screen w-60 shrink-0 flex-col lg:flex">
           <div className="flex items-center gap-2.5 px-4 py-5">
             <span className="flex size-8 items-center justify-center rounded-lg bg-[var(--ad-accent)] text-sm font-bold text-[#052e16]">
@@ -156,10 +162,6 @@ export function AdminShell({
             })}
           </nav>
           <div className="space-y-1 border-t border-[var(--ad-border)] p-2.5">
-            <Link href="/" className="ad-nav-item">
-              <ExternalLink size={16} />
-              {dict.backToSite}
-            </Link>
             <button type="button" onClick={logout} className="ad-nav-item w-full text-left">
               <LogOut size={16} />
               {dict.logout}
@@ -167,7 +169,6 @@ export function AdminShell({
           </div>
         </aside>
 
-        {/* Mobile drawer */}
         {sidebarOpen && (
           <div className="fixed inset-0 z-50 lg:hidden">
             <button
@@ -233,6 +234,22 @@ export function AdminShell({
                 <div className="flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
                   <button
                     type="button"
+                    onClick={() => setMode("PET")}
+                    className={clsx("px-2 py-1.5", mode === "PET" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
+                  >
+                    PET
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("PLASTIC")}
+                    className={clsx("px-2 py-1.5", mode === "PLASTIC" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
+                  >
+                    Plastic
+                  </button>
+                </div>
+                <div className="flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
+                  <button
+                    type="button"
                     onClick={() => setLocale("en")}
                     className={clsx("px-2 py-1.5", locale === "en" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
                   >
@@ -282,33 +299,6 @@ export function AdminShell({
         </div>
       </div>
 
-      {/* FAB */}
-      <div className="ad-fab">
-        {fabOpen && (
-          <div className="ad-fab-menu">
-            {[
-              { href: "/admin/rates", label: "Update Rates" },
-              { href: "/admin/materials", label: "Add Material" },
-              { href: "/admin/categories", label: "Add Category" },
-              { href: "/admin/backup", label: "Create Backup" },
-              { href: "/admin/reports", label: "Generate Report" },
-            ].map((a) => (
-              <Link key={a.href} href={a.href} className="ad-btn ad-btn-ghost bg-[var(--ad-card)] shadow-lg" onClick={() => setFabOpen(false)}>
-                {a.label}
-              </Link>
-            ))}
-          </div>
-        )}
-        <button
-          type="button"
-          onClick={() => setFabOpen((v) => !v)}
-          className="flex size-12 items-center justify-center rounded-full bg-[var(--ad-accent)] text-[#052e16] shadow-lg shadow-green-500/30"
-        >
-          {fabOpen ? <X size={20} /> : <Plus size={22} />}
-        </button>
-      </div>
-
-      {/* Command palette */}
       {cmdOpen && (
         <div className="ad-cmd" onClick={() => setCmdOpen(false)}>
           <div className="ad-cmd-panel" onClick={(e) => e.stopPropagation()}>
