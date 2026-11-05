@@ -5,11 +5,13 @@ import { useEffect, useState } from "react";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode, type BusinessMode } from "@/components/business-mode-provider";
 import VendorManagement from "../inventory/vendor-management";
+import BuyerManagement from "../inventory/buyer-management";
 
 export default function VendorsPage() {
   const { mode } = useBusinessMode();
   const [data, setData] = useState<any>(null);
   const [message, setMessage] = useState("");
+  const [tab, setTab] = useState<"vendors" | "buyers">("vendors");
 
   async function load() {
     const r = await fetch("/api/admin/inventory");
@@ -39,16 +41,24 @@ export default function VendorsPage() {
   }
 
   if (!data) {
-    return <AdminShell title="Vendors & Management"><div className="ad-card p-6">Loading…</div></AdminShell>;
+    return <AdminShell title="Vendors & Buyers"><div className="ad-card p-6">Loading…</div></AdminShell>;
   }
 
   return (
     <AdminShell
-      title={mode === "PET" ? "PET Vendors & Management" : "Plastic Vendors & Management"}
-      subtitle="Manage vendors, material supplied, payments, advances and outstanding balances"
+      title={mode === "PET" ? "PET Vendors & Buyers" : "Plastic Vendors & Buyers"}
+      subtitle={tab === "vendors"
+        ? "Manage vendors, material supplied, payments, advances and outstanding balances"
+        : "Manage buyers, advance money received from them and what is still pending"}
     >
       {message && <div className="mb-4 text-xs text-[var(--ad-accent)]">{message}</div>}
-      <VendorManagement data={data} mode={mode as BusinessMode} post={post} />
+      <div className="mb-4 flex gap-2">
+        <button className={"ad-btn " + (tab === "vendors" ? "ad-btn-primary" : "ad-btn-ghost")} onClick={() => setTab("vendors")}>Vendors</button>
+        <button className={"ad-btn " + (tab === "buyers" ? "ad-btn-primary" : "ad-btn-ghost")} onClick={() => setTab("buyers")}>Buyers</button>
+      </div>
+      {tab === "vendors"
+        ? <VendorManagement data={data} mode={mode as BusinessMode} post={post} />
+        : <BuyerManagement data={data} mode={mode as BusinessMode} post={post} />}
     </AdminShell>
   );
 }

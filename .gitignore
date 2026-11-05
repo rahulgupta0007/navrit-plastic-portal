@@ -38,6 +38,7 @@ yarn-error.log*
 /data/*.db-*
 /data/backups/*.db
 /data/backups/*.sha256
+/data/backups/*.zip
 !/data/backups/.gitkeep
 
 # typescript

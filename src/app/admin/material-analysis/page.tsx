@@ -76,7 +76,7 @@ export default function MaterialAnalysisPage() {
     ["Stock",kg(s?.stockKg),"Current physical ledger"],
   ];
 
-  return <AdminShell title={`${mode} Material & Profit Analysis`} subtitle="Purchase → Processing → Waste → Finished Material → Sale → Profit">
+  return <AdminShell title={`${mode} Material & Profit Analysis`} subtitle={mode==="PET"?"Purchase → Processing → Waste → Finished Material → Sale → Profit":"Purchase → Sale → Profit (Plastic has no process batches yet)"}>
     <div className="space-y-5">
       <div className="ad-card p-4">
         <div className="flex flex-wrap items-end gap-2">
@@ -86,12 +86,41 @@ export default function MaterialAnalysisPage() {
         </div>
       </div>
 
-      {s && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      {mode === "PLASTIC" && (
+        <div className="ad-card border border-[var(--ad-warning)] p-4">
+          <p className="font-semibold">Processing batches are PET-only for now</p>
+          <p className="ad-muted mt-1 text-sm">Use Plastic Inventory for buy/sell with your material types. Labour Management still works in Plastic mode.</p>
+        </div>
+      )}
+
+      {s && <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <div className="ad-card p-4"><p className="ad-muted text-xs">Purchased</p><p className="mt-1 text-2xl font-bold">{kg(s.purchasedKg)}</p><p className="text-xs ad-muted">{money(s.purchaseCost)}</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Finished Output</p><p className="mt-1 text-2xl font-bold">{kg(s.finishedOutputKg)}</p><p className="text-xs ad-muted">Cost {money(s.finishedCostPerKg)}/kg</p></div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Waste / Loss</p><p className="mt-1 text-2xl font-bold">{kg(s.wasteKg)}</p><p className="text-xs ad-muted">{Number(s.wastePct).toFixed(1)}% of processed input</p></div>
+        <div className="ad-card p-4">
+          <p className="ad-muted text-xs">Electricity cost / kg</p>
+          <p className="mt-1 text-2xl font-bold">{money(s.electricityCostPerKg||0)}</p>
+          <p className="text-xs ad-muted">
+            Total {money(s.totalElectricity||0)}
+            {s.allocatedSharedElectricity>0?` · shared share ${money(s.allocatedSharedElectricity)}`:""}
+            {s.electricityDenomKg>0?` ÷ ${kg(s.electricityDenomKg)}`:""}
+          </p>
+        </div>
         <div className="ad-card p-4"><p className="ad-muted text-xs">Estimated Net Profit</p><p className={`mt-1 text-2xl font-bold ${s.estimatedNetProfit>=0?"text-[var(--ad-success)]":"text-[var(--ad-danger)]"}`}>{money(s.estimatedNetProfit)}</p><p className="text-xs ad-muted">Revenue {money(s.revenue)} · COGS {money(s.estimatedCogs)}</p></div>
       </div>}
+
+      {data?.sharedAllocation && Number(data.sharedAllocation.sharedTotal||0)>0 && (
+        <div className="ad-card p-4">
+          <h2 className="font-semibold">Shared expenses allocated to {mode}</h2>
+          <p className="ad-muted mt-1 text-xs">{data.sharedAllocation.basis}</p>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4 text-sm">
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">Shared bill total</p><p className="font-semibold">{money(data.sharedAllocation.sharedTotal)}</p></div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">This mode share</p><p className="font-semibold">{Number(data.sharedAllocation.modeSharePct).toFixed(1)}% → {money(data.sharedAllocation.allocatedToMode)}</p></div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">PET activity</p><p className="font-semibold">{kg(data.sharedAllocation.petActivityKg)}</p></div>
+            <div className="rounded-lg border border-[var(--ad-border)] p-3"><p className="ad-muted text-xs">Plastic activity</p><p className="font-semibold">{kg(data.sharedAllocation.plasticActivityKg)}</p></div>
+          </div>
+        </div>
+      )}
 
       {s && <div className="ad-card p-4">
         <div className="mb-3 flex items-center justify-between"><h2 className="font-semibold">Material Flow</h2>{data.reconciliation.processingBalanced?<span className="inline-flex items-center gap-1 text-xs text-[var(--ad-success)]"><CheckCircle2 size={14}/> Processing reconciled</span>:<span className="inline-flex items-center gap-1 text-xs text-[var(--ad-danger)]"><AlertTriangle size={14}/> Check processing results</span>}</div>
@@ -101,7 +130,7 @@ export default function MaterialAnalysisPage() {
         <p className="mt-3 text-xs ad-muted">Profit is marked estimated because the current system does not yet have a full FIFO/average-cost ledger for every historical sale. New completed processing batches are fully reconciled input = finished output + waste.</p>
       </div>}
 
-      <div className="grid gap-5 lg:grid-cols-2">
+      {mode === "PET" && <div className="grid gap-5 lg:grid-cols-2">
         <div className="ad-card p-4">
           <h2 className="font-semibold">Record Processing Batch</h2>
           <p className="mt-1 text-xs ad-muted">Enter the material that went into one processing run.</p>
@@ -143,14 +172,14 @@ export default function MaterialAnalysisPage() {
             </div>
           </div>}
         </div>
-      </div>
+      </div>}
 
-      <div className="ad-card p-4">
+      {mode === "PET" && <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">Processing Batches</h2>
         <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Input</th><th>Finished</th><th>Waste</th><th>Waste %</th><th>Processing Cost</th><th>Status</th></tr></thead><tbody>
           {(data?.batches||[]).map((b:any)=>{const input=Number(b.total_input_kg),w=Number(b.waste_kg),out=Number(b.total_output_kg);return <tr key={b.id}><td>#{b.id} · {b.batch_date}</td><td>{kg(input)}</td><td>{kg(out)}</td><td>{kg(w)}</td><td>{input?(w/input*100).toFixed(1):"0.0"}%</td><td>{money(Number(b.labour_cost)+Number(b.processing_cost))}</td><td>{out||w?"Reconciled":"Needs output"}</td></tr>})}
         </tbody></table></div>
-      </div>
+      </div>}
 
       <div className="ad-card p-4">
         <h2 className="mb-3 font-semibold">Monthly Snapshot</h2>

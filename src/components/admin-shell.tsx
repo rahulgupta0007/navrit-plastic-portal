@@ -9,8 +9,6 @@ import clsx from "clsx";
 import {
   LayoutDashboard,
   Package,
-  BarChart3,
-  Download,
   LogOut,
   Search,
   Moon,
@@ -25,26 +23,30 @@ import {
   WalletCards,
   Factory,
 } from "lucide-react";
+import { NaviFloat } from "@/components/navi-float";
+import { NaviNavIcon } from "@/components/navi-logo";
 import "@/app/admin-theme.css";
 
 const navByMode = {
   PET: [
     { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
     { href: "/admin/inventory", label: "PET Inventory", icon: Package },
-    { href: "/admin/vendors", label: "Vendors & Management", icon: Users },
+    { href: "/admin/vendors", label: "Vendors & Buyers", icon: Users },
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
+    { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
   PLASTIC: [
     { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },
-    { href: "/admin/inventory", label: "Plastic Inventory & Finance", icon: Package },
-    { href: "/admin/analytics", label: "Plastic Analytics", icon: BarChart3 },
+    { href: "/admin/inventory", label: "Plastic Inventory", icon: Package },
+    { href: "/admin/vendors", label: "Vendors & Buyers", icon: Users },
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
-    { href: "/admin/reports", label: "Plastic Reports", icon: Download },
-    { href: "/admin/report-analysis", label: "Plastic Month Analysis", icon: LineChart },
-    { href: "/admin/backup", label: "Backup", icon: HardDrive },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
+    { href: "/admin/processing", label: "Labour Management", icon: Factory },
+    { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
 } as const;
 
@@ -340,6 +342,8 @@ export function AdminShell({
           </div>
         ))}
       </div>
+
+      <NaviFloat />
     </div>
   );
 }
