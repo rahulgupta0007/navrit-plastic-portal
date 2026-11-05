@@ -52,6 +52,7 @@ export default function AdminBackupPage() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmText, setConfirmText] = useState("");
+  const [importFile, setImportFile] = useState<File | null>(null);
   const [importResult, setImportResult] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -124,36 +125,46 @@ export default function AdminBackupPage() {
 
   async function restore(filename: string) {
     if (
-      !confirm(
+      !window.confirm(
         `Restore ${filename}?\n\nThis replaces the live database. A safety backup of the current DB is created first. Restart the server after restore.`
       )
     ) {
       return;
     }
     setBusy(true);
-    const res = await fetch("/api/admin/backup", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "restore", filename }),
-    });
-    setBusy(false);
-    const data = await res.json();
-    if (!res.ok) {
-      adminToast(data.error || "Restore failed");
-      return;
+    try {
+      const res = await fetch("/api/admin/backup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "restore", filename }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        adminToast(data.error || `Restore failed (HTTP ${res.status})`);
+        return;
+      }
+      adminToast("Restored. Restart / redeploy the app to reload connections.");
+      load();
+    } catch (e) {
+      adminToast(e instanceof Error ? e.message : "Restore failed");
+    } finally {
+      setBusy(false);
     }
-    adminToast("Restored. Restart the app to reload connections.");
-    load();
   }
 
-  async function onImportFile(file: File | null) {
-    if (!file) return;
+  async function runImport() {
+    const file = importFile;
+    if (!file) {
+      adminToast("Choose a .zip or .db file first");
+      fileRef.current?.focus();
+      return;
+    }
     if (confirmText.trim() !== "RESTORE") {
-      adminToast('Type RESTORE in the confirm box before importing');
+      adminToast("Type RESTORE in the confirm box before importing");
       return;
     }
     if (
-      !confirm(
+      !window.confirm(
         `Import ${file.name}?\n\nThis REPLACES all live business data. A safety backup is created first. After import, restart/redeploy the app.`
       )
     ) {
@@ -167,19 +178,24 @@ export default function AdminBackupPage() {
       form.set("confirm", "RESTORE");
       form.set("file", file);
       const res = await fetch("/api/admin/backup", { method: "POST", body: form });
-      const data = await res.json();
+      let data: Record<string, unknown> = {};
+      try {
+        data = await res.json();
+      } catch {
+        adminToast(`Import failed (HTTP ${res.status})`);
+        return;
+      }
       if (!res.ok) {
-        adminToast(data.error || "Import failed");
+        adminToast(String(data.error || "Import failed"));
         return;
       }
 
-      const counts = data.tableCounts
-        ? Object.entries(data.tableCounts as Record<string, number>)
-            .map(([k, v]) => `${k}: ${v}`)
-            .join(" · ")
-        : "";
+      const tableCounts = (data.tableCounts || {}) as Record<string, number>;
+      const counts = Object.entries(tableCounts)
+        .map(([k, v]) => `${k}: ${v}`)
+        .join(" · ");
       const lines = [
-        data.message || "Import complete",
+        String(data.message || "Import complete"),
         `Checksum: ${data.checksum || "—"}`,
         `Size: ${data.sizeLabel || "—"}`,
         counts ? `Rows — ${counts}` : "",
@@ -195,8 +211,11 @@ export default function AdminBackupPage() {
       setImportResult(lines.join("\n"));
       adminToast("Import complete — restart/redeploy the app");
       setConfirmText("");
+      setImportFile(null);
       if (fileRef.current) fileRef.current.value = "";
       load();
+    } catch (e) {
+      adminToast(e instanceof Error ? e.message : "Import failed");
     } finally {
       setBusy(false);
     }
@@ -293,13 +312,31 @@ export default function AdminBackupPage() {
           Import on this system
         </p>
         <p className="mt-1 text-xs text-[var(--ad-muted)]">
-          Upload a <code>navrit-migration-*.zip</code> or a raw <code>plastic-rates*.db</code>. This
-          replaces live data after a safety snapshot.
+          1) Choose a <code>navrit-migration-*.zip</code> or <code>plastic-rates*.db</code> · 2) Type{" "}
+          <strong className="text-[var(--ad-text)]">RESTORE</strong> · 3) Click Import. Replaces live
+          data after a safety snapshot.
         </p>
-        <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
-          <label className="block flex-1 text-xs">
+        <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <label className="block text-xs">
+            <span className="mb-1 block text-[var(--ad-muted)]">Migration file</span>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".zip,.db,application/zip,application/octet-stream"
+              className="ad-input w-full cursor-pointer text-sm file:mr-3 file:rounded file:border-0 file:bg-[var(--ad-accent)] file:px-3 file:py-1.5 file:text-xs file:font-semibold file:text-black"
+              onChange={(e) => setImportFile(e.target.files?.[0] || null)}
+            />
+            {importFile ? (
+              <span className="mt-1 block truncate font-mono text-[10px] text-[var(--ad-accent)]">
+                Selected: {importFile.name} ({Math.max(1, Math.round(importFile.size / 1024))} KB)
+              </span>
+            ) : (
+              <span className="mt-1 block text-[10px] text-[var(--ad-muted)]">No file selected yet</span>
+            )}
+          </label>
+          <label className="block text-xs">
             <span className="mb-1 block text-[var(--ad-muted)]">
-              Type <strong className="text-[var(--ad-text)]">RESTORE</strong> to enable import
+              Type <strong className="text-[var(--ad-text)]">RESTORE</strong> to unlock
             </span>
             <input
               className="ad-input w-full font-mono"
@@ -307,29 +344,20 @@ export default function AdminBackupPage() {
               onChange={(e) => setConfirmText(e.target.value)}
               placeholder="RESTORE"
               autoComplete="off"
+              spellCheck={false}
             />
           </label>
           <div className="flex flex-wrap gap-2">
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".zip,.db,application/zip,application/octet-stream"
-              className="hidden"
-              onChange={(e) => onImportFile(e.target.files?.[0] || null)}
-            />
             <button
               type="button"
               className="ad-btn ad-btn-danger"
-              disabled={busy || confirmText.trim() !== "RESTORE"}
-              onClick={() => fileRef.current?.click()}
+              disabled={busy || !importFile || confirmText.trim() !== "RESTORE"}
+              onClick={runImport}
             >
-              <Upload size={14} /> Choose file & import
+              <Upload size={14} /> {busy ? "Importing…" : "Import / Restore"}
             </button>
-            <a
-              href="/api/admin/backup?envTemplate=1"
-              className="ad-btn ad-btn-ghost"
-            >
-              <Download size={14} /> Env template (redacted)
+            <a href="/api/admin/backup?envTemplate=1" className="ad-btn ad-btn-ghost">
+              <Download size={14} /> Env template
             </a>
           </div>
         </div>
