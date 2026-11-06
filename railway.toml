@@ -1,0 +1,13 @@
+# Railway service config for NAVRIT.
+# CRITICAL: Attach a Volume to this service with mount path /app/data
+# Otherwise SQLite is wiped on every deploy.
+#
+# Dashboard: Service → Settings → Volumes → Add volume → Mount path: /app/data
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+# Keep the process alive; do not run seed on start.
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10

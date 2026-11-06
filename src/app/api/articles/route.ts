@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSession } from "@/lib/auth";
+import { getSession, requireWriteSession } from "@/lib/auth";
 import {
   createArticle,
   deleteArticle,
@@ -36,8 +36,8 @@ const createSchema = z.object({
 });
 
 export async function POST(req: NextRequest) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const write = await requireWriteSession();
+  if (write.error) return write.error;
   const body = await req.json().catch(() => null);
   const parsed = createSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid" }, { status: 400 });
@@ -48,8 +48,8 @@ export async function POST(req: NextRequest) {
 const patchSchema = createSchema.partial().extend({ id: z.number() });
 
 export async function PATCH(req: NextRequest) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const write = await requireWriteSession();
+  if (write.error) return write.error;
   const body = await req.json().catch(() => null);
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "Invalid" }, { status: 400 });
@@ -60,8 +60,8 @@ export async function PATCH(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const write = await requireWriteSession();
+  if (write.error) return write.error;
   const id = Number(req.nextUrl.searchParams.get("id"));
   if (!id) return NextResponse.json({ error: "Missing id" }, { status: 400 });
   deleteArticle(id);

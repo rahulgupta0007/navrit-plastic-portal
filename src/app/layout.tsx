@@ -2,8 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Plus_Jakarta_Sans } from "next/font/google";
 import "./globals.css";
 import { LocaleProvider } from "@/components/locale-provider";
-import { SiteHeader } from "@/components/site-header";
-import { SiteFooter } from "@/components/site-footer";
+import { BusinessModeProvider } from "@/components/business-mode-provider";
 import { ThemeProvider } from "@/components/theme-provider";
 
 const inter = Inter({
@@ -24,7 +23,7 @@ const tagline =
 
 export const metadata: Metadata = {
   title: {
-    default: `${businessName} | Daily Plastic Purchase Rates`,
+    default: `${businessName} | Management Portal`,
     template: `%s | ${businessName}`,
   },
   description: tagline,
@@ -38,12 +37,12 @@ export const metadata: Metadata = {
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} ${jakarta.variable}`} suppressHydrationWarning>
-      <body className="flex min-h-screen flex-col antialiased">
+      <body className="min-h-screen antialiased">
         <ThemeProvider>
           <LocaleProvider>
-            <SiteHeader />
-            <main className="flex-1">{children}</main>
-            <SiteFooter />
+            <BusinessModeProvider>
+              {children}
+            </BusinessModeProvider>
           </LocaleProvider>
         </ThemeProvider>
       </body>

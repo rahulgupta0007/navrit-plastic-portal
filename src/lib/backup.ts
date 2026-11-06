@@ -2,10 +2,16 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { DatabaseSync } from "node:sqlite";
+import { closeDb } from "@/db";
+import {
+  resolveBackupDir,
+  resolveDataDir,
+  resolveDbFile,
+} from "@/lib/data-paths";
 
-export const DATA_DIR = path.join(process.cwd(), "data");
-export const DB_FILE = path.join(DATA_DIR, "plastic-rates.db");
-export const BACKUP_DIR = path.join(DATA_DIR, "backups");
+export const DATA_DIR = resolveDataDir();
+export const DB_FILE = resolveDbFile(DATA_DIR);
+export const BACKUP_DIR = resolveBackupDir(DATA_DIR);
 
 const MAX_BACKUPS = 30;
 
@@ -127,12 +133,16 @@ export function restoreBackup(filename: string) {
     throw new Error(`Checksum mismatch — backup may be corrupt (${check.actual} ≠ ${check.expected})`);
   }
 
+  // Disconnect the app's singleton before replacing the live database.
+  // The singleton must be reset or future writes can continue against the old inode.
+  closeDb();
+
   // Safety net: backup current DB before overwrite
   if (fs.existsSync(DB_FILE)) {
     createBackup("pre-restore");
   }
 
-  // Checkpoint and close any WAL, then replace
+  // Checkpoint and close any WAL, then replace.
   try {
     const live = new DatabaseSync(DB_FILE);
     live.exec("PRAGMA wal_checkpoint(TRUNCATE);");
@@ -147,6 +157,7 @@ export function restoreBackup(filename: string) {
   }
 
   fs.copyFileSync(source, DB_FILE);
+  closeDb();
   return { restored: filename, safetyBackup: true };
 }
 

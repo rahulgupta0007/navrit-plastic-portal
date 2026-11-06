@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSession } from "@/lib/auth";
+import { getSession, requireWriteSession } from "@/lib/auth";
 import { getSiteContent, updateSiteContent } from "@/lib/content";
 
 export const dynamic = "force-dynamic";
@@ -16,8 +16,8 @@ const schema = z.object({
 });
 
 export async function PUT(req: NextRequest) {
-  const session = await getSession();
-  if (!session) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const write = await requireWriteSession();
+  if (write.error) return write.error;
 
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);

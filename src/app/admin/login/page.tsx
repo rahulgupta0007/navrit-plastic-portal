@@ -1,9 +1,8 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, Eye, EyeOff, Lock } from "lucide-react";
+import { Eye, EyeOff, Lock } from "lucide-react";
 import { useLocale } from "@/components/locale-provider";
 import clsx from "clsx";
 
@@ -63,14 +62,7 @@ export default function AdminLoginPage() {
       {/* Form panel */}
       <div className="relative flex flex-col bg-[#f3f8f6]">
         <div className="flex items-center justify-between px-5 py-4 sm:px-10">
-          <Link
-            href="/"
-            className="inline-flex items-center gap-2 text-sm font-medium text-[#042821]/55 transition hover:text-[#042821]"
-          >
-            <ArrowLeft size={16} />
-            {dict.backHome}
-          </Link>
-          <div className="flex overflow-hidden rounded-full border border-[#042821]/12 bg-white text-xs font-bold">
+          <div className="ml-auto flex overflow-hidden rounded-full border border-[#042821]/12 bg-white text-xs font-bold">
             <button
               type="button"
               onClick={() => setLocale("en")}
@@ -104,6 +96,10 @@ export default function AdminLoginPage() {
             </div>
             <h2 className="font-display text-3xl text-[#042821] sm:text-4xl">{dict.login}</h2>
             <p className="mt-2 text-sm text-[#1a2e2a]">{dict.loginSubtitle}</p>
+            <p className="mt-2 text-xs text-[#042821]/55">
+              Admin = full access. View-only login (if configured) can browse data but cannot change
+              anything.
+            </p>
 
             <label className="mt-8 block text-sm font-medium text-[#042821]">
               {dict.username}
