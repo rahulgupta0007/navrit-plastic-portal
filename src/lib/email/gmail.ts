@@ -19,8 +19,42 @@ export function gmailAppPassword() {
   );
 }
 
+/** Always include Rahul, Devesh, Nitin on purchase/payment slips. */
+export const DEFAULT_SLIP_RECIPIENTS = [
+  "rahulnitingupta741@gmail.com",
+  "deveshemailbox@gmail.com",
+  "nitingupta212000@gmail.com",
+] as const;
+
+function parseEmailList(raw: string): string[] {
+  return raw
+    .split(/[,;\n]+/)
+    .map((s) => cleanEnv(s))
+    .filter((s) => s.includes("@"));
+}
+
+/** Primary inbox (first recipient) — kept for diagnostics / single-field UI. */
 export function notifyInbox(): string {
-  return cleanEnv(process.env.NOTIFY_EMAIL) || gmailUser();
+  return notifyRecipients()[0] || "";
+}
+
+/**
+ * All slip recipients: NOTIFY_EMAILS (or NOTIFY_EMAIL) plus the three office inboxes.
+ * Deduped, lowercased keys, original casing preserved from first occurrence.
+ */
+export function notifyRecipients(): string[] {
+  const fromEnv = parseEmailList(
+    cleanEnv(process.env.NOTIFY_EMAILS) || cleanEnv(process.env.NOTIFY_EMAIL) || gmailUser()
+  );
+  const ordered: string[] = [];
+  const seen = new Set<string>();
+  for (const email of [...fromEnv, ...DEFAULT_SLIP_RECIPIENTS]) {
+    const key = email.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    ordered.push(email);
+  }
+  return ordered;
 }
 
 export function resendApiKey() {
@@ -28,27 +62,29 @@ export function resendApiKey() {
 }
 
 export function isEmailConfigured() {
-  if (resendApiKey() && notifyInbox()) return true;
-  return Boolean(gmailUser() && gmailAppPassword() && notifyInbox());
+  if (resendApiKey() && notifyRecipients().length > 0) return true;
+  return Boolean(gmailUser() && gmailAppPassword() && notifyRecipients().length > 0);
 }
 
 export function emailConfigDiagnostics() {
   const user = gmailUser();
   const pass = gmailAppPassword();
-  const notify = notifyInbox();
+  const recipients = notifyRecipients();
+  const notify = recipients.join(", ");
   const resend = Boolean(resendApiKey());
   const missing: string[] = [];
   if (!resend) {
     if (!user) missing.push("GMAIL_USER");
     if (!pass) missing.push("GMAIL_APP_PASSWORD");
   }
-  if (!notify) missing.push("NOTIFY_EMAIL");
+  if (!recipients.length) missing.push("NOTIFY_EMAIL or NOTIFY_EMAILS");
   return {
     configured: isEmailConfigured(),
     hasGmailUser: Boolean(user),
     hasGmailAppPassword: Boolean(pass),
     hasResendKey: resend,
     notifyEmail: notify || "",
+    notifyRecipients: recipients,
     transport: resend ? "resend" : user && pass ? "gmail-smtp" : "none",
     missing,
   };
@@ -69,7 +105,7 @@ function resendFromAddress() {
 }
 
 async function sendViaResend(opts: {
-  to: string;
+  to: string | string[];
   subject: string;
   text: string;
   html?: string;
@@ -82,59 +118,106 @@ async function sendViaResend(opts: {
     return { ok: false, error: "RESEND_API_KEY looks invalid — it should start with re_" };
   }
   const from = resendFromAddress();
+  const recipients = (Array.isArray(opts.to) ? opts.to : [opts.to]).map((t) => cleanEnv(t)).filter(Boolean);
+  if (!recipients.length) return { ok: false, error: "No email recipients" };
 
-  try {
+  async function postTo(toList: string[]) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15000);
-    const res = await fetch("https://api.resend.com/emails", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        from,
-        to: [opts.to],
-        subject: opts.subject,
-        text: opts.text,
-        html: opts.html || undefined,
-        attachments: [
-          {
-            filename: opts.filename,
-            content: opts.pdf.toString("base64"),
-          },
-        ],
-      }),
-    }).finally(() => clearTimeout(timer));
-
-    const json = (await res.json().catch(() => ({}))) as {
-      id?: string;
-      message?: string;
-      name?: string;
-      error?: { message?: string; name?: string };
-    };
-    if (!res.ok) {
-      const detail = json.error?.message || json.message || json.name || json.error?.name || `Resend failed (${res.status})`;
-      if (/domain is not verified|gmail\.com domain/i.test(detail)) {
-        return {
-          ok: false,
-          error:
-            "Resend From address cannot be Gmail. On Railway delete RESEND_FROM (or set RESEND_FROM=\"NAVRIT Portal <onboarding@resend.dev>\"), keep NOTIFY_EMAIL as your Gmail, redeploy, then Send test email",
-        };
+    try {
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          from,
+          to: toList,
+          subject: opts.subject,
+          text: opts.text,
+          html: opts.html || undefined,
+          attachments: [
+            {
+              filename: opts.filename,
+              content: opts.pdf.toString("base64"),
+            },
+          ],
+        }),
+      });
+      const json = (await res.json().catch(() => ({}))) as {
+        id?: string;
+        message?: string;
+        name?: string;
+        error?: { message?: string; name?: string };
+      };
+      if (!res.ok) {
+        const detail =
+          json.error?.message || json.message || json.name || json.error?.name || `Resend failed (${res.status})`;
+        return { ok: false as const, error: detail, status: res.status };
       }
-      if (/only send testing emails to your own/i.test(detail)) {
-        return {
-          ok: false,
-          error: `${detail} — NOTIFY_EMAIL must be the same Gmail you used to sign up on Resend (while on free test domain)`,
-        };
-      }
-      if (/api key|unauthorized|401/i.test(detail) || res.status === 401) {
-        return { ok: false, error: "Resend API key rejected — recreate key in Resend and update RESEND_API_KEY on Railway" };
-      }
-      return { ok: false, error: `Resend: ${detail}` };
+      return { ok: true as const, messageId: json.id };
+    } finally {
+      clearTimeout(timer);
     }
-    return { ok: true, messageId: json.id };
+  }
+
+  try {
+    // Prefer one email to everyone; if Resend rejects multi-recipient (test domain), send one-by-one.
+    const batch = await postTo(recipients);
+    if (batch.ok) return { ok: true, messageId: batch.messageId };
+
+    const detail = batch.error;
+    if (/domain is not verified|gmail\.com domain/i.test(detail)) {
+      return {
+        ok: false,
+        error:
+          "Resend From address cannot be Gmail. On Railway delete RESEND_FROM (or set RESEND_FROM=\"NAVRIT Portal <onboarding@resend.dev>\"), keep NOTIFY_EMAIL as your Gmail, redeploy, then Send test email",
+      };
+    }
+    if (/api key|unauthorized|401/i.test(detail) || batch.status === 401) {
+      return { ok: false, error: "Resend API key rejected — recreate key in Resend and update RESEND_API_KEY on Railway" };
+    }
+
+    if (recipients.length > 1) {
+      const sent: string[] = [];
+      const failed: string[] = [];
+      let lastId: string | undefined;
+      for (const to of recipients) {
+        const one = await postTo([to]);
+        if (one.ok) {
+          sent.push(to);
+          lastId = one.messageId || lastId;
+        } else {
+          failed.push(`${to}: ${one.error}`);
+        }
+      }
+      if (sent.length) {
+        if (failed.length) {
+          return {
+            ok: true,
+            messageId: lastId,
+          };
+        }
+        return { ok: true, messageId: lastId };
+      }
+      if (/only send testing emails to your own/i.test(failed.join(" "))) {
+        return {
+          ok: false,
+          error: `${failed[0]} — verify a domain in Resend (or use Gmail SMTP) to email Rahul, Devesh, and Nitin together`,
+        };
+      }
+      return { ok: false, error: `Resend: ${failed[0] || detail}` };
+    }
+
+    if (/only send testing emails to your own/i.test(detail)) {
+      return {
+        ok: false,
+        error: `${detail} — NOTIFY_EMAIL must be the same Gmail you used to sign up on Resend (while on free test domain)`,
+      };
+    }
+    return { ok: false, error: `Resend: ${detail}` };
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Resend failed";
     return { ok: false, error: msg.includes("abort") ? "Resend timed out" : msg };
@@ -142,7 +225,7 @@ async function sendViaResend(opts: {
 }
 
 async function sendViaGmailSmtp(opts: {
-  to: string;
+  to: string | string[];
   subject: string;
   text: string;
   html?: string;
@@ -152,6 +235,9 @@ async function sendViaGmailSmtp(opts: {
   const user = gmailUser();
   const pass = gmailAppPassword();
   if (!user || !pass) return { ok: false, error: "GMAIL_USER / GMAIL_APP_PASSWORD missing" };
+
+  const recipients = (Array.isArray(opts.to) ? opts.to : [opts.to]).map((t) => cleanEnv(t)).filter(Boolean);
+  if (!recipients.length) return { ok: false, error: "No email recipients" };
 
   const fromName = process.env.NEXT_PUBLIC_BUSINESS_NAME || "NAVRIT";
   const attempts: Array<{ host: string; port: number; secure: boolean }> = [
@@ -175,7 +261,7 @@ async function sendViaGmailSmtp(opts: {
 
       const info = await transport.sendMail({
         from: `"${fromName} Portal" <${user}>`,
-        to: opts.to,
+        to: recipients.join(", "),
         subject: opts.subject,
         text: opts.text,
         html: opts.html,
@@ -219,7 +305,7 @@ async function sendViaGmailSmtp(opts: {
 }
 
 export async function sendMailWithPdf(opts: {
-  to: string;
+  to: string | string[];
   subject: string;
   text: string;
   html?: string;
@@ -260,16 +346,17 @@ export async function sendTestEmail(): Promise<
   if (!diagnostics.configured) {
     return { ok: false, error: `Missing ${diagnostics.missing.join(", ") || "email settings"}`, diagnostics };
   }
-  const to = notifyInbox();
+  const recipients = notifyRecipients();
+  const to = recipients.join(", ");
   const pdf = Buffer.from(
     "%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n",
     "utf8"
   );
   const sent = await sendMailWithPdf({
-    to,
+    to: recipients,
     subject: "NAVRIT portal — test email",
-    text: "Test from NAVRIT portal. If you received this, purchase PDF email is working. Check Spam if needed.",
-    html: "<p>Test from <b>NAVRIT</b> portal. If you received this, purchase PDF email is working.</p><p>Check Spam if needed.</p>",
+    text: `Test from NAVRIT portal to: ${to}. If you received this, purchase PDF email is working. Check Spam if needed.`,
+    html: `<p>Test from <b>NAVRIT</b> portal to <code>${to}</code>.</p><p>If you received this, purchase PDF email is working. Check Spam if needed.</p>`,
     filename: "navrit-test.txt.pdf",
     pdf,
   });

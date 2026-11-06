@@ -3,7 +3,7 @@ import bcrypt from "bcryptjs";
 import { createHash, timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { sqlite } from "@/db";
-import { createSession } from "@/lib/auth";
+import { createSession, type SessionRole } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +54,12 @@ function safeEqual(a: string, b: string) {
   return timingSafeEqual(ah, bh);
 }
 
+function envCredsMatch(username: string, password: string, envUser?: string, envPass?: string) {
+  if (!envUser || !envPass) return false;
+  if (envUser.length === 0 || envPass.length === 0) return false;
+  return safeEqual(username, envUser) && safeEqual(password, envPass);
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => null);
   const parsed = schema.safeParse(body);
@@ -66,32 +72,45 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many login attempts. Try again later." }, { status: 429 });
   }
 
-  // Railway production credentials are supplied through environment variables.
-  // Keep the database-backed admin as a fallback for local/development setups.
-  const envUsername = process.env.ADMIN_USERNAME;
-  const envPassword = process.env.ADMIN_PASSWORD;
+  const { username, password } = parsed.data;
+  const adminUser = process.env.ADMIN_USERNAME?.trim();
+  const adminPass = process.env.ADMIN_PASSWORD;
+  const readonlyUser = process.env.READONLY_USERNAME?.trim();
+  const readonlyPass = process.env.READONLY_PASSWORD;
 
-  if (envUsername && envPassword) {
-    if (!safeEqual(parsed.data.username, envUsername) || !safeEqual(parsed.data.password, envPassword)) {
-      recordFailure(key);
-      return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
-    }
+  let role: SessionRole | null = null;
+  let sessionUser = username;
 
+  if (envCredsMatch(username, password, adminUser, adminPass)) {
+    role = "admin";
+    sessionUser = adminUser!;
+  } else if (envCredsMatch(username, password, readonlyUser, readonlyPass)) {
+    role = "readonly";
+    sessionUser = readonlyUser!;
+  }
+
+  if (role) {
     clearFailures(key);
-    await createSession(envUsername);
-    return NextResponse.json({ ok: true });
+    await createSession(sessionUser, role);
+    return NextResponse.json({ ok: true, role });
+  }
+
+  // Production-style: when admin env creds exist, do not fall through to DB users.
+  if (adminUser && adminPass) {
+    recordFailure(key);
+    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
   const admin = sqlite
     .prepare(`SELECT username, password_hash FROM admins WHERE username = ?`)
-    .get(parsed.data.username) as { username: string; password_hash: string } | undefined;
+    .get(username) as { username: string; password_hash: string } | undefined;
 
-  if (!admin || !(await bcrypt.compare(parsed.data.password, admin.password_hash))) {
+  if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
     recordFailure(key);
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
 
   clearFailures(key);
-  await createSession(admin.username);
-  return NextResponse.json({ ok: true });
+  await createSession(admin.username, "admin");
+  return NextResponse.json({ ok: true, role: "admin" as const });
 }

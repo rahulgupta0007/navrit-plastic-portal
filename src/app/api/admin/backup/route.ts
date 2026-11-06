@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import fs from "fs";
-import { getSession } from "@/lib/auth";
+import { getSession, requireWriteSession, canWrite } from "@/lib/auth";
 import {
   createBackup,
   listBackups,
@@ -56,6 +56,14 @@ export async function GET(req: NextRequest) {
 
   const migrationDownload = req.nextUrl.searchParams.get("migrationDownload");
   if (migrationDownload) {
+    // Migration packs include secrets — admin write role only
+    const session = await getSession();
+    if (!canWrite(session)) {
+      return NextResponse.json(
+        { error: "View-only account — migration packs are admin-only" },
+        { status: 403 }
+      );
+    }
     try {
       const full = resolveMigrationPackPath(migrationDownload);
       const buf = fs.readFileSync(full);
@@ -104,7 +112,8 @@ function pathBasename(name: string) {
 }
 
 export async function POST(req: NextRequest) {
-  if (!(await guard())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const write = await requireWriteSession();
+  if (write.error) return write.error;
 
   const contentType = req.headers.get("content-type") || "";
 

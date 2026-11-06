@@ -1,6 +1,11 @@
 import { sqlite } from "@/db";
 import { nowIso } from "@/lib/rates";
-import { emailConfigDiagnostics, isEmailConfigured, notifyInbox, sendMailWithPdf } from "@/lib/email/gmail";
+import {
+  emailConfigDiagnostics,
+  isEmailConfigured,
+  notifyRecipients,
+  sendMailWithPdf,
+} from "@/lib/email/gmail";
 import { buildPurchaseSlipPdf, type PurchaseSlipData } from "@/lib/whatsapp/purchase-pdf";
 import { formatPhoneDisplay } from "@/lib/whatsapp/phone";
 
@@ -155,7 +160,8 @@ function logEmail(opts: {
 }
 
 /**
- * Email full purchase/payment PDF to NOTIFY_EMAIL (your Gmail). Soft-fail — never throws.
+ * Email full purchase/payment PDF to Rahul + Devesh + Nitin (and any extra NOTIFY_EMAILS).
+ * Soft-fail — never throws.
  */
 export async function notifyPurchaseEmail(opts: {
   purchaseId: number;
@@ -177,7 +183,8 @@ export async function notifyPurchaseEmail(opts: {
     };
   }
 
-  const to = notifyInbox();
+  const recipients = notifyRecipients();
+  const to = recipients.join(", ");
   const slip = loadPurchaseSlip(opts.purchaseId, opts.kind, opts.payment);
   if (!slip) {
     return { configured: true, skipped: true, skippedReason: "Purchase or vendor missing" };
@@ -218,6 +225,7 @@ export async function notifyPurchaseEmail(opts: {
     `Remaining to vendor: ₹${Number(slip.creditAmount).toFixed(2)}`,
     `Vendor outstanding: ₹${Number(slip.vendorOutstanding).toFixed(2)}`,
     `Vendor advance: ₹${Number(slip.vendorAdvance).toFixed(2)}`,
+    `Sent to: ${to}`,
     "",
     "PDF attached. Forward to WhatsApp group / vendor manually if needed.",
   ].join("\n");
@@ -226,7 +234,7 @@ export async function notifyPurchaseEmail(opts: {
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")}</pre>`;
 
-  const sent = await sendMailWithPdf({ to, subject, text, html, filename, pdf });
+  const sent = await sendMailWithPdf({ to: recipients, subject, text, html, filename, pdf });
   if (!sent.ok) {
     logEmail({
       eventType: opts.kind,

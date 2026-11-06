@@ -11,7 +11,9 @@ async function validSession(token: string) {
       token,
       new TextEncoder().encode(secret)
     );
-    return typeof payload.username === "string" && payload.role === "admin";
+    if (typeof payload.username !== "string") return false;
+    // admin = full access; readonly = view ledgers only
+    return payload.role === "admin" || payload.role === "readonly" || payload.role == null;
   } catch {
     return false;
   }

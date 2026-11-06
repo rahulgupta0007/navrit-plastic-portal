@@ -22,6 +22,7 @@ import {
   Users,
   WalletCards,
   Factory,
+  Eye,
 } from "lucide-react";
 import { NaviFloat } from "@/components/navi-float";
 import { NaviNavIcon } from "@/components/navi-logo";
@@ -84,8 +85,16 @@ export function AdminShell({
   const [cmdOpen, setCmdOpen] = useState(false);
   const [cmdQ, setCmdQ] = useState("");
   const [toasts, setToasts] = useState<Toast[]>([]);
-  const owner = process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
-  const nav = navByMode[mode];
+  const [sessionUser, setSessionUser] = useState(username || "");
+  const [canWrite, setCanWrite] = useState(true);
+  const [role, setRole] = useState<"admin" | "readonly">("admin");
+
+  const owner = sessionUser || process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
+  const navAll = navByMode[mode];
+  const nav = useMemo(
+    () => (canWrite ? [...navAll] : navAll.filter((n) => n.href !== "/admin/backup")),
+    [navAll, canWrite]
+  );
 
   useEffect(() => {
     const saved = localStorage.getItem("navrit-admin-theme");
@@ -95,6 +104,67 @@ export function AdminShell({
   useEffect(() => {
     localStorage.setItem("navrit-admin-theme", dark ? "dark" : "light");
   }, [dark]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/auth/me", { cache: "no-store" });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        setSessionUser(String(data.username || ""));
+        const write = data.canWrite !== false && data.role !== "readonly";
+        setCanWrite(write);
+        setRole(data.role === "readonly" ? "readonly" : "admin");
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (role !== "readonly") return;
+    const orig = window.fetch.bind(window);
+    window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+      const method = String(
+        init?.method || (input instanceof Request ? input.method : "GET")
+      ).toUpperCase();
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input instanceof Request
+              ? input.url
+              : String(input);
+      if (["POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+        if (url.includes("/api/auth/logout") || url.includes("/api/admin/assistant")) {
+          return orig(input, init);
+        }
+        if (url.includes("/api/")) {
+          adminToast("View-only account — cannot change data");
+          return new Response(
+            JSON.stringify({ error: "View-only account — changes are not allowed" }),
+            { status: 403, headers: { "Content-Type": "application/json" } }
+          );
+        }
+      }
+      return orig(input, init);
+    };
+    return () => {
+      window.fetch = orig;
+    };
+  }, [role]);
+
+  useEffect(() => {
+    if (role === "readonly" && pathname.startsWith("/admin/backup")) {
+      router.replace("/admin");
+    }
+  }, [role, pathname, router]);
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -137,8 +207,11 @@ export function AdminShell({
     return () => window.removeEventListener("admin-toast", onToast);
   }, []);
 
+  const headerActions = canWrite ? actions : null;
+  const displayName = role === "readonly" ? sessionUser || "Viewer" : owner.split(" ")[0];
+
   return (
-    <div className={clsx("admin-app", !dark && "admin-light")}>
+    <div className={clsx("admin-app", !dark && "admin-light")} data-readonly={role === "readonly" ? "1" : undefined}>
       <div className="flex min-h-screen">
         <aside className="ad-sidebar sticky top-0 hidden h-screen w-60 shrink-0 flex-col lg:flex">
           <div className="flex items-center gap-2.5 px-4 py-5">
@@ -147,7 +220,9 @@ export function AdminShell({
             </span>
             <div>
               <p className="text-sm font-bold tracking-tight">NAVRIT</p>
-              <p className="text-[10px] uppercase tracking-wider text-[var(--ad-muted)]">Admin</p>
+              <p className="text-[10px] uppercase tracking-wider text-[var(--ad-muted)]">
+                {role === "readonly" ? "View only" : "Admin"}
+              </p>
             </div>
           </div>
           <nav className="flex-1 space-y-0.5 px-2.5 pb-4">
@@ -181,7 +256,7 @@ export function AdminShell({
             />
             <aside className="ad-sidebar absolute inset-y-0 left-0 flex w-64 flex-col">
               <div className="flex items-center justify-between px-4 py-4">
-                <p className="font-bold">NAVRIT Admin</p>
+                <p className="font-bold">NAVRIT {role === "readonly" ? "View" : "Admin"}</p>
                 <button type="button" onClick={() => setSidebarOpen(false)}>
                   <X size={18} />
                 </button>
@@ -216,7 +291,8 @@ export function AdminShell({
 
               <div className="hidden min-w-0 sm:block">
                 <p className="text-[11px] text-[var(--ad-muted)]">
-                  Admin / <span className="text-[var(--ad-text)]">{crumbs}</span>
+                  {role === "readonly" ? "View" : "Admin"} /{" "}
+                  <span className="text-[var(--ad-text)]">{crumbs}</span>
                 </p>
               </div>
 
@@ -278,22 +354,38 @@ export function AdminShell({
                 </button>
                 <div className="hidden items-center gap-2 rounded-lg border border-[var(--ad-border)] px-2.5 py-1.5 sm:flex">
                   <span className="flex size-6 items-center justify-center rounded-full bg-[var(--ad-accent-dim)] text-[10px] font-bold text-[var(--ad-accent)]">
-                    {owner.slice(0, 1).toUpperCase()}
+                    {displayName.slice(0, 1).toUpperCase()}
                   </span>
-                  <span className="text-xs font-medium">{owner.split(" ")[0]}</span>
+                  <span className="text-xs font-medium">{displayName}</span>
+                  {role === "readonly" ? (
+                    <span className="inline-flex items-center gap-0.5 rounded bg-[var(--ad-accent-dim)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ad-accent)]">
+                      <Eye size={10} /> View
+                    </span>
+                  ) : null}
                 </div>
               </div>
             </div>
           </header>
 
           <main className="flex-1 px-4 py-5 sm:px-6">
-            {(title || actions) && (
+            {role === "readonly" ? (
+              <div className="mb-4 flex items-start gap-2 rounded-lg border border-[var(--ad-border)] bg-[var(--ad-accent-dim)]/40 px-3 py-2 text-xs text-[var(--ad-muted)]">
+                <Eye size={14} className="mt-0.5 shrink-0 text-[var(--ad-accent)]" />
+                <p>
+                  <strong className="text-[var(--ad-text)]">View-only login</strong> — you can browse
+                  all ledgers and reports. Saving, editing, deletes, and backups are disabled.
+                </p>
+              </div>
+            ) : null}
+            {(title || headerActions) && (
               <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
                 <div>
                   {title && <h1 className="ad-page-title">{title}</h1>}
                   {subtitle && <p className="ad-muted mt-1">{subtitle}</p>}
                 </div>
-                {actions && <div className="flex flex-wrap items-center gap-2">{actions}</div>}
+                {headerActions && (
+                  <div className="flex flex-wrap items-center gap-2">{headerActions}</div>
+                )}
               </div>
             )}
             {children}

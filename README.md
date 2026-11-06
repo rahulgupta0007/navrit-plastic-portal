@@ -26,6 +26,8 @@ Open [http://localhost:3000](http://localhost:3000)
 **Admin:** [http://localhost:3000/admin](http://localhost:3000/admin)  
 Default login (from `.env.local`): `admin` / `admin123`
 
+**View-only user (optional):** set `READONLY_USERNAME` + `READONLY_PASSWORD` in `.env.local` / Railway Variables. That login can browse all ledgers and reports but cannot save, edit, delete, or use Backup.
+
 ## Features
 
 ### Public
@@ -49,13 +51,15 @@ Default login (from `.env.local`): `admin` / `admin123`
   - `NAVI_API_KEY` or `OPENAI_API_KEY` (OpenAI-compatible)
   - optional `NAVI_API_BASE`, `NAVI_MODEL` (default `gpt-4o-mini`)
 
-### Email purchase / payment slips (Gmail)
-- On **add/update purchase** and **vendor payment**, the portal builds a PDF (kg, rate, paid, remaining on bill, vendor outstanding + advance) and emails it to your Gmail.
-- You can forward the PDF to a WhatsApp group / vendor manually.
-- Free with Gmail App Password. Set on Railway:
-  - `GMAIL_USER` — Gmail that sends (e.g. `rahulnitingupta741@gmail.com`)
-  - `GMAIL_APP_PASSWORD` — 16-char App Password (Google Account → Security → 2-Step Verification → App passwords)
-  - `NOTIFY_EMAIL` — inbox to receive slips (defaults to `GMAIL_USER`, use `rahulnitingupta741@gmail.com`)
+### Email purchase / payment slips (Gmail / Resend)
+- On **add/update purchase** and **vendor payment**, the portal builds a PDF and emails it to **Rahul, Devesh, and Nitin**:
+  - `rahulnitingupta741@gmail.com`
+  - `deveshemailbox@gmail.com`
+  - `nitingupta212000@gmail.com`
+- Extra addresses can be added with `NOTIFY_EMAILS` (comma-separated).
+- Preferred on Railway: `RESEND_API_KEY` (HTTPS). Fallback: Gmail App Password.
+  - `RESEND_API_KEY` / or `GMAIL_USER` + `GMAIL_APP_PASSWORD`
+  - Optional `NOTIFY_EMAIL` / `NOTIFY_EMAILS`
 
 ### Verified business rules (local smoke)
 - Purchase → inventory_transactions (+kg); sale → adjustment (−kg) using the same stock key

@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSession } from "@/lib/auth";
+import { getSession, requireWriteSession } from "@/lib/auth";
 import { sqlite } from "@/db";
 import { listMaterials, nowIso, todayStr } from "@/lib/rates";
 import { ACCOUNT_PERSONS, optionalAccountPersonSchema, accountPersonSchema } from "@/lib/account-persons";
@@ -989,7 +989,8 @@ type PendingEmail = {
 };
 
 export async function POST(req: NextRequest) {
-  if (!(await guard())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  const write = await requireWriteSession();
+  if (write.error) return write.error;
   const body = await req.json().catch(() => null);
   if (!body?.action) return NextResponse.json({ error: "Missing action" }, { status: 400 });
 
