@@ -72,12 +72,22 @@ export function AdminDashboardClient({ username }: { username: string }) {
   const [period, setPeriod] = useState<PeriodPreset>("30");
   const [customFrom, setCustomFrom] = useState(daysAgo(30));
   const [customTo, setCustomTo] = useState(todayStr());
+  const [persistence, setPersistence] = useState<{
+    ok?: boolean;
+    ephemeral?: boolean;
+    message?: string | null;
+    dataDir?: string;
+  } | null>(null);
 
   useEffect(() => {
     fetch("/api/admin/inventory")
       .then((r) => (r.ok ? r.json() : null))
       .then(setData)
       .catch(() => setData(null));
+    fetch("/api/admin/persistence")
+      .then((r) => (r.ok ? r.json() : null))
+      .then(setPersistence)
+      .catch(() => setPersistence(null));
   }, []);
 
   const { from, to, label } = useMemo(() => {
@@ -140,14 +150,31 @@ export function AdminDashboardClient({ username }: { username: string }) {
 
   return (
     <AdminShell username={username} title={mode + " Command Center"} subtitle={"Internal management · " + username}>
+      {persistence && persistence.ok === false ? (
+        <div className="ad-card mb-4 border border-red-500/50 bg-red-500/10 p-4 text-sm">
+          <p className="font-semibold text-red-300">Railway Volume missing — data will wipe on every deploy</p>
+          <p className="mt-1 text-[var(--ad-muted)]">
+            {persistence.message ||
+              "Attach a Volume at /app/data before importing. Importing without a volume only saves until the next update."}
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-[var(--ad-muted)]">
+            <li>Railway → this service → Settings → Volumes → mount path <code className="text-[var(--ad-accent)]">/app/data</code></li>
+            <li>Redeploy</li>
+            <li>
+              Then <Link className="text-[var(--ad-accent)] underline" href="/admin/backup">Backup → Import</Link> your
+              migration zip
+            </li>
+          </ol>
+        </div>
+      ) : null}
       {dbLooksWiped ? (
         <div className="ad-card mb-4 border border-red-500/40 bg-red-500/10 p-4 text-sm">
           <p className="font-semibold text-red-300">No business data found</p>
           <p className="mt-1 text-[var(--ad-muted)]">
-            After a Railway deploy this usually means the SQLite volume was missing or replaced with an empty one.
-            Go to <Link className="text-[var(--ad-accent)] underline" href="/admin/backup">Backup</Link> and
-            import your <code>navrit-migration-*.zip</code>, or remount the old volume at{" "}
-            <code className="text-[var(--ad-accent)]">/app/data</code>.
+            First confirm a Volume is mounted at <code className="text-[var(--ad-accent)]">/app/data</code>, then go to{" "}
+            <Link className="text-[var(--ad-accent)] underline" href="/admin/backup">Backup</Link> and import your{" "}
+            <code>navrit-migration-*.zip</code>. Do not import until the volume is attached or the next update will wipe
+            again.
           </p>
         </div>
       ) : null}

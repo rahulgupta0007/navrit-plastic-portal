@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { DatabaseSync } from "node:sqlite";
 import { closeDb } from "@/db";
 import {
+  assertPersistentDataDir,
   resolveBackupDir,
   resolveDataDir,
   resolveDbFile,
@@ -41,6 +42,7 @@ function stamp() {
 
 /** Safe online backup via SQLite VACUUM INTO (consistent snapshot). */
 export function createBackup(reason = "manual"): BackupInfo {
+  assertPersistentDataDir(DATA_DIR);
   ensureDirs();
   if (!fs.existsSync(DB_FILE)) {
     throw new Error("Database file not found. Run npm run db:seed first.");
