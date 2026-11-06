@@ -10,6 +10,11 @@ import { friendlyZodError } from "@/lib/api-errors";
 import { LABOUR_TASKS } from "@/lib/labour-tasks";
 import { attendanceEarnedAmount, halfDayRate } from "@/lib/labour-math";
 import { notifyPurchaseEmail, type NotifyKind } from "@/lib/email/notify-purchase";
+import {
+  TRANSACTION_EMAIL_ACTIONS,
+  buildTxNotifyFromAction,
+  notifyTransactionEmail,
+} from "@/lib/email/notify-transaction";
 import { emailConfigDiagnostics, isEmailConfigured, sendTestEmail } from "@/lib/email/gmail";
 
 function workerWageDue(workerId: number, dailyRate: number, mode?: string) {
@@ -1124,9 +1129,9 @@ export async function POST(req: NextRequest) {
       if (x.fundingSource === "OWN_POCKET" && !x.paidBy) {
         return NextResponse.json({error:"Payment done by is required for own-pocket payments"}, {status:400});
       }
-      sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+      const r = sqlite.prepare(`INSERT INTO other_expenses (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`)
         .run(x.mode,null,x.expenseType,x.description,x.amount,x.expenseDate,"ONE_TIME",x.paidBy??"",nowIso(),billingMonth,billingStartDate,billingEndDate,x.fundingSource);
-      return json({ok:true});
+      return json({ok:true, id: Number(r.lastInsertRowid)});
     }
 
     if (body.action === "addBorrowing") {
@@ -2067,8 +2072,8 @@ export async function POST(req: NextRequest) {
         fundingSource: optionalFundingSourceSchema,
       }).parse(body);
       if (s.fundingSource === "OWN_POCKET" && !s.paidBy) return NextResponse.json({error:"Payment done by is required for own-pocket payments"},{status:400});
-      sqlite.prepare("INSERT INTO processing_expenses (mode,expense_type,description,amount,expense_date,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,s.expenseType,s.description,s.amount,s.expenseDate,s.paidBy??"",nowIso(),s.fundingSource);
-      return json({ok:true});
+      const r = sqlite.prepare("INSERT INTO processing_expenses (mode,expense_type,description,amount,expense_date,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,s.expenseType,s.description,s.amount,s.expenseDate,s.paidBy??"",nowIso(),s.fundingSource);
+      return json({ok:true, id: Number(r.lastInsertRowid)});
     }
 
     if (body.action === "addSale") {
@@ -2332,37 +2337,60 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
     });
 
-    if (pendingEmail && response.ok) {
-      const base = await response.json().catch(() => ({ ok: true }));
-      // Never let SMTP hang kill the purchase save (Railway/proxy timeouts become generic client errors).
-      try {
-        const email = await Promise.race([
+    if (response.ok) {
+      const base = (await response.json().catch(() => ({ ok: true }))) as Record<string, unknown>;
+
+      const sendWithTimeout = async <T,>(promise: Promise<T>, fallback: T): Promise<T> => {
+        try {
+          return await Promise.race([
+            promise,
+            new Promise<T>((resolve) => setTimeout(() => resolve(fallback), 12000)),
+          ]);
+        } catch (mailError) {
+          return {
+            ...(fallback as object),
+            ok: false,
+            error: mailError instanceof Error ? mailError.message : "Email failed",
+          } as T;
+        }
+      };
+
+      // Purchase / vendor-payment PDF slips (existing detailed flow)
+      if (pendingEmail) {
+        const email = await sendWithTimeout(
           notifyPurchaseEmail(pendingEmail),
-          new Promise<Awaited<ReturnType<typeof notifyPurchaseEmail>>>((resolve) =>
-            setTimeout(
-              () =>
-                resolve({
-                  configured: true,
-                  skipped: false,
-                  ok: false,
-                  error: "Email timed out — purchase saved. Check Gmail App Password or use RESEND_API_KEY",
-                }),
-              12000
-            )
-          ),
-        ]);
-        return NextResponse.json({ ...base, email });
-      } catch (mailError) {
-        return NextResponse.json({
-          ...base,
-          email: {
+          {
             configured: true,
             skipped: false,
             ok: false,
-            error: mailError instanceof Error ? mailError.message : "Email failed",
-          },
-        });
+            error: "Email timed out — saved. Check RESEND_API_KEY / Gmail",
+          } as Awaited<ReturnType<typeof notifyPurchaseEmail>>
+        );
+        return NextResponse.json({ ...base, email });
       }
+
+      // All other money transactions → office slip to Rahul + Devesh + Nitin
+      if (TRANSACTION_EMAIL_ACTIONS.has(String(body.action))) {
+        const payload = buildTxNotifyFromAction(
+          String(body.action),
+          body as Record<string, unknown>,
+          base
+        );
+        if (payload) {
+          const email = await sendWithTimeout(
+            notifyTransactionEmail(payload),
+            {
+              configured: true,
+              skipped: false,
+              ok: false,
+              error: "Email timed out — saved. Check RESEND_API_KEY / Gmail",
+            } as Awaited<ReturnType<typeof notifyTransactionEmail>>
+          );
+          return NextResponse.json({ ...base, email });
+        }
+      }
+
+      return NextResponse.json(base);
     }
     return response;
   } catch (e) {
