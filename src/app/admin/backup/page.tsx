@@ -43,6 +43,14 @@ type Status = {
   env: EnvRow[];
   envSetCount: number;
   envMissing: string[];
+  looksEmpty?: boolean;
+  emptyWarning?: string | null;
+  persistence?: {
+    dataDir: string;
+    dbFile: string;
+    railway: boolean;
+    volumeMountEnv: string | null;
+  };
 };
 
 export default function AdminBackupPage() {
@@ -248,6 +256,30 @@ export default function AdminBackupPage() {
         </>
       }
     >
+      {status?.looksEmpty || status?.emptyWarning ? (
+        <div className="ad-card mb-4 border border-red-500/40 bg-red-500/10 p-4 text-sm">
+          <p className="font-semibold text-red-300">Data looks empty after deploy</p>
+          <p className="mt-2 text-[var(--ad-muted)]">
+            {status.emptyWarning ||
+              "No purchases/sales found. Railway may have started with a new empty volume."}
+          </p>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-[var(--ad-muted)]">
+            <li>
+              Railway → this service → <strong className="text-[var(--ad-text)]">Settings → Volumes</strong> —
+              mount path must be <code className="text-[var(--ad-accent)]">/app/data</code> (reuse the old
+              volume if you still have it).
+            </li>
+            <li>
+              Or below: type <code>RESTORE</code>, upload your laptop{" "}
+              <code>navrit-migration-*.zip</code>, Import.
+            </li>
+          </ol>
+          <p className="mt-2 truncate text-[10px] text-[var(--ad-muted)]" title={status.dbPath}>
+            DB path: {status.dbPath} · dir: {status.dataDir}
+          </p>
+        </div>
+      ) : null}
+
       <div className="mb-4 grid gap-3 sm:grid-cols-3">
         <div className="ad-card p-4">
           <p className="text-[11px] font-semibold uppercase tracking-wide text-[var(--ad-muted)]">

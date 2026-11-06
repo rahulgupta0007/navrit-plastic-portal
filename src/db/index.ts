@@ -1,20 +1,19 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "fs";
 import path from "path";
+import {
+  assertPersistentDataDir,
+  findExistingDbCandidates,
+  isProductionRuntime,
+  resolveBackupDir,
+  resolveDataDir,
+  resolveDbFile,
+  tryRestoreDbFromBackups,
+} from "@/lib/data-paths";
 
-// Production data MUST live on Railway's persistent Volume.
-// The path can be overridden explicitly, but never falls back to the app's
-// ephemeral filesystem in production.
-const configuredDataDir = process.env.NAVRIT_DATA_DIR?.trim();
-const dataDir =
-  configuredDataDir ||
-  (process.env.NODE_ENV === "production"
-    ? "/app/data"
-    : path.join(process.cwd(), "data"));
-
-const dbPath =
-  process.env.NAVRIT_DB_PATH?.trim() ||
-  path.join(dataDir, "plastic-rates.db");
+// Production / Railway data MUST live on a persistent Volume (default /app/data).
+const dataDir = resolveDataDir();
+let dbPath = resolveDbFile(dataDir);
 
 const globalForDb = globalThis as unknown as { __plasticDb?: DatabaseSync };
 
@@ -32,17 +31,56 @@ function shouldUseMemoryDb() {
   );
 }
 
+function resolveLiveDbPath() {
+  // Prefer an existing non-empty DB (handles path changes after volume remount).
+  for (const candidate of findExistingDbCandidates(dbPath)) {
+    try {
+      if (fs.existsSync(candidate) && fs.statSync(candidate).size > 100) {
+        if (candidate !== dbPath) {
+          console.warn(`[navrit] Using existing database at ${candidate} (configured ${dbPath})`);
+        }
+        return candidate;
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  return dbPath;
+}
+
 function createDb() {
   const memory = shouldUseMemoryDb();
 
   if (!memory) {
-    if (process.env.NODE_ENV === "production" && !fs.existsSync(dataDir)) {
-      throw new Error(
-        `Persistent data directory is unavailable: ${dataDir}. Refusing to create a new production database on ephemeral storage.`
-      );
-    }
+    assertPersistentDataDir(dataDir);
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
+    }
+    const backupDir = resolveBackupDir(dataDir);
+    if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
+
+    dbPath = resolveLiveDbPath();
+    tryRestoreDbFromBackups(dbPath, backupDir);
+
+    // Still missing after restore attempt — only allow empty DB when explicitly opted in,
+    // or when not on Railway/production (local first run).
+    if (!fs.existsSync(dbPath) && isProductionRuntime()) {
+      if (process.env.NAVRIT_ALLOW_EMPTY_DB === "1") {
+        console.warn(
+          `[navrit] Creating EMPTY production database at ${dbPath} (NAVRIT_ALLOW_EMPTY_DB=1). Import a migration pack to restore data.`
+        );
+      } else {
+        // Create empty schema so Admin → Backup → Import still works, but warn loudly.
+        console.error(
+          [
+            `[navrit] WARNING: No database found at ${dbPath} and no backups to restore.`,
+            "A new empty DB will be created. Your previous data is NOT here.",
+            "Fix: mount Railway Volume at /app/data (same volume that held plastic-rates.db),",
+            "or Admin → Backup → Import your navrit-migration-*.zip from your laptop.",
+            "Set NAVRIT_ALLOW_EMPTY_DB=1 to silence this after intentional wipe.",
+          ].join(" ")
+        );
+      }
     }
   }
 

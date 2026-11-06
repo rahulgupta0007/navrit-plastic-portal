@@ -132,9 +132,25 @@ export function AdminDashboardClient({ username }: { username: string }) {
 
   const recentPurchases = purchasesInRange.slice(0, 8);
   const recentSales = salesInRange.slice(0, 8);
+  const dbLooksWiped =
+    !!data &&
+    (data.purchases || []).length === 0 &&
+    (data.sales || []).length === 0 &&
+    (data.inventory || []).every((r) => Number(r.quantityKg || 0) === 0);
 
   return (
     <AdminShell username={username} title={mode + " Command Center"} subtitle={"Internal management · " + username}>
+      {dbLooksWiped ? (
+        <div className="ad-card mb-4 border border-red-500/40 bg-red-500/10 p-4 text-sm">
+          <p className="font-semibold text-red-300">No business data found</p>
+          <p className="mt-1 text-[var(--ad-muted)]">
+            After a Railway deploy this usually means the SQLite volume was missing or replaced with an empty one.
+            Go to <Link className="text-[var(--ad-accent)] underline" href="/admin/backup">Backup</Link> and
+            import your <code>navrit-migration-*.zip</code>, or remount the old volume at{" "}
+            <code className="text-[var(--ad-accent)]">/app/data</code>.
+          </p>
+        </div>
+      ) : null}
       <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.14em] text-[var(--ad-muted)]">Period</p>

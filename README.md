@@ -132,6 +132,17 @@ Your live data lives in **`data/plastic-rates.db`**. Backups go to **`data/backu
 
 Never delete `data/` on the server when deploying code.
 
+### Railway Volume (required — prevents data loss on deploy)
+
+SQLite lives on disk. Railway’s container filesystem is **wiped every deploy**.
+
+1. Service → **Settings → Volumes → Add volume**
+2. Mount path: **`/app/data`** (exact)
+3. Redeploy once
+4. Keep using the **same** volume forever (do not create a new empty volume when moving projects — remount the old one, or Import a migration pack)
+
+Optional: `NAVRIT_DATA_DIR=/app/data` in Variables (defaults to `/app/data` on Railway).
+
 ## Hosting (low cost, easy upgrades)
 
 This app uses **SQLite on disk**, so it needs a small VPS / cloud VM with **persistent storage** — not pure serverless (Vercel alone) unless you move the DB elsewhere.

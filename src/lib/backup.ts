@@ -3,14 +3,15 @@ import path from "path";
 import crypto from "crypto";
 import { DatabaseSync } from "node:sqlite";
 import { closeDb } from "@/db";
+import {
+  resolveBackupDir,
+  resolveDataDir,
+  resolveDbFile,
+} from "@/lib/data-paths";
 
-const configuredDataDir = process.env.NAVRIT_DATA_DIR?.trim();
-export const DATA_DIR =
-  configuredDataDir ||
-  (process.env.NODE_ENV === "production" ? "/app/data" : path.join(process.cwd(), "data"));
-export const DB_FILE =
-  process.env.NAVRIT_DB_PATH?.trim() || path.join(DATA_DIR, "plastic-rates.db");
-export const BACKUP_DIR = path.join(DATA_DIR, "backups");
+export const DATA_DIR = resolveDataDir();
+export const DB_FILE = resolveDbFile(DATA_DIR);
+export const BACKUP_DIR = resolveBackupDir(DATA_DIR);
 
 const MAX_BACKUPS = 30;
 

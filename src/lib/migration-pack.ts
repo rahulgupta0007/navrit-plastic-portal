@@ -5,6 +5,7 @@ import { DatabaseSync } from "node:sqlite";
 import JSZip from "jszip";
 import { closeDb } from "@/db";
 import { BACKUP_DIR, DATA_DIR, DB_FILE, createBackup, formatBytes } from "@/lib/backup";
+import { getDataPersistenceInfo } from "@/lib/data-paths";
 
 /** Env keys we care about for an exact Railway copy. */
 export const MIGRATION_ENV_KEYS = [
@@ -396,6 +397,11 @@ export function getMigrationStatus() {
       tableCounts = {};
     }
   }
+  const purchases = Number(tableCounts.purchases || 0);
+  const sales = Number(tableCounts.sales || 0);
+  const persistence = getDataPersistenceInfo();
+  const looksEmpty = dbExists && purchases === 0 && sales === 0 && Number(tableCounts.inventory_transactions || 0) === 0;
+
   return {
     dbExists,
     dbPath: DB_FILE,
@@ -407,5 +413,10 @@ export function getMigrationStatus() {
     envSetCount: envVars.filter((v) => v.set).length,
     envMissing: envVars.filter((v) => !v.set).map((v) => v.key),
     migrationPacks: listMigrationPacks(),
+    persistence,
+    looksEmpty,
+    emptyWarning: looksEmpty
+      ? "Database looks empty (no purchases/sales). If this followed a deploy, the Railway Volume may be missing or new — import a migration pack, or remount the old volume at /app/data."
+      : null,
   };
 }
