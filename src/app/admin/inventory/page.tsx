@@ -1013,12 +1013,36 @@ export default function InventoryPage() {
         <div className="ad-card p-4"><p className="ad-muted text-xs">Current Month</p><p className="mt-1 text-2xl font-bold">₹{(data.otherExpenses||[]).filter((x:any)=>(x.mode===mode||x.mode==="SHARED")&&((x.expense_type==="Electricity"&&x.billing_month===new Date().toISOString().slice(0,7))||(!x.billing_month&&String(x.expense_date||"").startsWith(new Date().toISOString().slice(0,7))))).reduce((n:number,x:any)=>n+Number(x.amount||0),0).toFixed(2)}</p></div>
       </div>
       <div className="ad-card p-4">
-        <h2 className="mb-3 font-semibold">Add Business Expense</h2>
-        <p className="mb-3 text-xs ad-muted">Electricity for both machines → choose <b>Shared (PET + Plastic)</b>. Company book records it once; Material Analysis allocates cost per kg by activity.</p>
+        <div className="mb-3 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <h2 className="font-semibold">Add Business Expense</h2>
+            <p className="mt-1 text-xs ad-muted">Electricity for both machines → choose <b>Shared (PET + Plastic)</b>. Company book records it once; Material Analysis allocates cost per kg by activity.</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap justify-end gap-1.5 sm:max-w-[55%]">
+            {(["Electricity","Thread","GST / Admin","Infrastructure / Maintenance","Other"] as const).map((type) => (
+              <button
+                key={type}
+                type="button"
+                className={
+                  "rounded-lg border px-2.5 py-1.5 text-[11px] font-semibold transition " +
+                  (expense.expenseType === type
+                    ? "border-[var(--ad-accent)] bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"
+                    : "border-[var(--ad-border)] text-[var(--ad-muted)] hover:border-[var(--ad-accent)]/50 hover:text-[var(--ad-text)]")
+                }
+                onClick={() =>
+                  setExpense({
+                    ...expense,
+                    expenseType: type,
+                    scope: type === "Electricity" ? expense.scope : "MODE",
+                  })
+                }
+              >
+                {type === "Infrastructure / Maintenance" ? "Infra / Maint." : type}
+              </button>
+            ))}
+          </div>
+        </div>
         <div className="grid gap-2 md:grid-cols-6">
-          <select className="ad-input" value={expense.expenseType} onChange={e=>setExpense({...expense,expenseType:e.target.value,scope:e.target.value==="Electricity"?expense.scope:"MODE"})}>
-            <option>Electricity</option><option>Thread</option><option>GST / Admin</option><option>Infrastructure / Maintenance</option><option>Other</option>
-          </select>
           <select className="ad-input" value={expense.scope} onChange={e=>setExpense({...expense,scope:e.target.value as "MODE"|"SHARED"})}>
             <option value="SHARED">Shared (PET + Plastic)</option>
             <option value="MODE">{mode} only</option>
@@ -1030,6 +1054,7 @@ export default function InventoryPage() {
           <FundingSelect value={expense.fundingSource} onChange={(v)=>setExpense({...expense,fundingSource:v})} />
           <input className="ad-input" placeholder="Description / notes" value={expense.description} onChange={e=>setExpense({...expense,description:e.target.value})}/>
         </div>
+        <p className="mt-2 text-[11px] text-[var(--ad-muted)]">Selected type: <span className="font-semibold text-[var(--ad-text)]">{expense.expenseType}</span></p>
         <button className="ad-btn ad-btn-primary mt-3" onClick={addExpense}>Save Expense</button>
       </div>
       <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Payment Date</th><th>Scope</th><th>Category</th><th>Billing Period</th><th>Description</th><th>Amount</th><th>Payment done by</th><th>Paid from</th></tr></thead><tbody>
