@@ -4,8 +4,10 @@ import path from "path";
 /**
  * Resolve where SQLite lives.
  *
- * On Railway, the container filesystem is wiped every deploy. Data must sit on a
- * Volume mounted at /app/data (or NAVRIT_DATA_DIR / RAILWAY_VOLUME_MOUNT_PATH).
+ * CRITICAL (Railway): the git repo contains `data/`, so `/app/data` exists inside
+ * the container image even WITHOUT a Volume. Writes there are wiped on every deploy.
+ * We detect that by comparing filesystem device IDs — a real Volume mount is a
+ * different device from `/app`.
  */
 export function isRailwayRuntime() {
   return Boolean(
@@ -37,6 +39,51 @@ export function resolveDbFile(dataDir = resolveDataDir()) {
 
 export function resolveBackupDir(dataDir = resolveDataDir()) {
   return path.join(dataDir, "backups");
+}
+
+/** True when dataDir is on the same disk as the app image (ephemeral). */
+export function isEphemeralAppStorage(dataDir: string): boolean {
+  if (process.env.NAVRIT_ALLOW_EPHEMERAL_DB === "1") return false;
+
+  try {
+    const appRoot = process.cwd();
+    if (!fs.existsSync(dataDir)) {
+      // Missing dir on Railway usually means no volume — treat as ephemeral until mounted.
+      return isProductionRuntime();
+    }
+    const dataDev = fs.statSync(dataDir).dev;
+    const appDev = fs.statSync(appRoot).dev;
+    if (dataDev !== appDev) return false; // different device ⇒ volume (or bind mount)
+
+    // Same device as /app — also check /proc/mounts for an explicit mount on this path
+    if (isPathExplicitlyMounted(dataDir)) return false;
+
+    return true;
+  } catch {
+    return isProductionRuntime();
+  }
+}
+
+function isPathExplicitlyMounted(target: string): boolean {
+  try {
+    const resolved = fs.realpathSync(target);
+    const mounts = fs.readFileSync("/proc/mounts", "utf8").split("\n");
+    for (const line of mounts) {
+      const parts = line.split(/\s+/);
+      const mountPoint = parts[1];
+      if (!mountPoint) continue;
+      let decoded = mountPoint.replace(/\\040/g, " ");
+      try {
+        decoded = fs.realpathSync(decoded);
+      } catch {
+        /* keep decoded */
+      }
+      if (decoded === resolved) return true;
+    }
+  } catch {
+    /* /proc/mounts unavailable */
+  }
+  return false;
 }
 
 /** Look for an existing DB if the configured path is empty (path migration / wrong mount). */
@@ -86,28 +133,40 @@ export function tryRestoreDbFromBackups(dbFile: string, backupDir: string): stri
   return newest.full;
 }
 
+export function volumeSetupError(dataDir: string): string {
+  return [
+    `NAVRIT REFUSING TO USE EPHEMERAL DISK at ${dataDir}.`,
+    "Railway deletes container files on every deploy — that is why your data keeps disappearing.",
+    "Fix (required):",
+    "1) Railway → navrit-plastic-portal → Settings → Volumes",
+    "2) Add / attach a volume with mount path exactly: /app/data",
+    "3) Redeploy",
+    "4) Admin → Backup → Import your navrit-migration-*.zip (RESTORE)",
+    "5) Redeploy again — data must still be there",
+    "Optional: set NAVRIT_DATA_DIR to your volume mount path if it is not /app/data.",
+  ].join(" ");
+}
+
 export function assertPersistentDataDir(dataDir: string) {
   if (!isProductionRuntime()) return;
 
-  if (!fs.existsSync(dataDir)) {
-    throw new Error(
-      [
-        `Persistent data directory missing: ${dataDir}`,
-        "On Railway: attach a Volume to this service with mount path /app/data",
-        "(or set NAVRIT_DATA_DIR to your volume mount path), then redeploy.",
-        "Without a volume, every deploy wipes the SQLite database.",
-      ].join(" ")
-    );
+  if (isEphemeralAppStorage(dataDir)) {
+    throw new Error(volumeSetupError(dataDir));
   }
 
-  // Detect ephemeral container storage when possible (Railway volume mounts are typically not under /app except /app/data).
+  if (!fs.existsSync(dataDir)) {
+    throw new Error(volumeSetupError(dataDir));
+  }
+
   try {
-    const testFile = path.join(dataDir, ".navrit-volume-check");
-    fs.writeFileSync(testFile, String(Date.now()));
-    // leave the marker — proves writability across restarts when volume works
+    const stamp = path.join(dataDir, ".navrit-persistent");
+    fs.writeFileSync(
+      stamp,
+      JSON.stringify({ at: new Date().toISOString(), dir: dataDir }, null, 2)
+    );
   } catch (e) {
     throw new Error(
-      `Data directory is not writable: ${dataDir} (${e instanceof Error ? e.message : "error"})`
+      `Data directory is not writable: ${dataDir} (${e instanceof Error ? e.message : "error"}). ${volumeSetupError(dataDir)}`
     );
   }
 }
@@ -128,6 +187,7 @@ export function getDataPersistenceInfo() {
       .readdirSync(backupDir)
       .filter((f) => f.endsWith(".db") || f.endsWith(".zip")).length;
   }
+  const ephemeral = isEphemeralAppStorage(dataDir);
   return {
     dataDir,
     dbFile,
@@ -137,7 +197,10 @@ export function getDataPersistenceInfo() {
     backupCount,
     railway: isRailwayRuntime(),
     production: isProductionRuntime(),
+    ephemeral,
+    persistentOk: !ephemeral && fs.existsSync(dataDir),
     volumeMountEnv: process.env.RAILWAY_VOLUME_MOUNT_PATH || null,
     navritDataDirEnv: process.env.NAVRIT_DATA_DIR || null,
+    setupError: ephemeral ? volumeSetupError(dataDir) : null,
   };
 }

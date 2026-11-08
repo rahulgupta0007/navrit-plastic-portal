@@ -136,12 +136,16 @@ Never delete `data/` on the server when deploying code.
 
 SQLite lives on disk. Railway’s container filesystem is **wiped every deploy**.
 
-1. Service → **Settings → Volumes → Add volume**
-2. Mount path: **`/app/data`** (exact)
-3. Redeploy once
-4. Keep using the **same** volume forever (do not create a new empty volume when moving projects — remount the old one, or Import a migration pack)
+The git repo includes an empty `data/` folder, so `/app/data` exists **inside the image** even with no Volume. Saving/importing there looks fine until the next deploy deletes it. The app now **detects** that and refuses ephemeral storage.
 
-Optional: `NAVRIT_DATA_DIR=/app/data` in Variables (defaults to `/app/data` on Railway).
+**Correct order:**
+1. Service → **Settings → Volumes → Add volume**
+2. Mount path: **`/app/data`** (exact) — reuse the same volume forever
+3. Redeploy (app should start on the volume)
+4. Only then: Admin → **Backup → Import** `navrit-migration-*.zip`
+5. Redeploy once more and confirm data is still there
+
+Optional: `NAVRIT_DATA_DIR=/app/data`. Escape hatch (not for production): `NAVRIT_ALLOW_EPHEMERAL_DB=1`.
 
 ## Hosting (low cost, easy upgrades)
 

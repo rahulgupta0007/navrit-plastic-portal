@@ -52,7 +52,10 @@ function createDb() {
   const memory = shouldUseMemoryDb();
 
   if (!memory) {
+    // HARD STOP on Railway when /app/data is only the image folder (no Volume).
+    // Importing into ephemeral disk looks fine until the next deploy wipes it.
     assertPersistentDataDir(dataDir);
+
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
@@ -62,25 +65,10 @@ function createDb() {
     dbPath = resolveLiveDbPath();
     tryRestoreDbFromBackups(dbPath, backupDir);
 
-    // Still missing after restore attempt — only allow empty DB when explicitly opted in,
-    // or when not on Railway/production (local first run).
     if (!fs.existsSync(dbPath) && isProductionRuntime()) {
-      if (process.env.NAVRIT_ALLOW_EMPTY_DB === "1") {
-        console.warn(
-          `[navrit] Creating EMPTY production database at ${dbPath} (NAVRIT_ALLOW_EMPTY_DB=1). Import a migration pack to restore data.`
-        );
-      } else {
-        // Create empty schema so Admin → Backup → Import still works, but warn loudly.
-        console.error(
-          [
-            `[navrit] WARNING: No database found at ${dbPath} and no backups to restore.`,
-            "A new empty DB will be created. Your previous data is NOT here.",
-            "Fix: mount Railway Volume at /app/data (same volume that held plastic-rates.db),",
-            "or Admin → Backup → Import your navrit-migration-*.zip from your laptop.",
-            "Set NAVRIT_ALLOW_EMPTY_DB=1 to silence this after intentional wipe.",
-          ].join(" ")
-        );
-      }
+      console.warn(
+        `[navrit] Volume OK but no database yet at ${dbPath}. Create via use, or Admin → Backup → Import migration zip.`
+      );
     }
   }
 

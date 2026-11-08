@@ -5,7 +5,11 @@ import { DatabaseSync } from "node:sqlite";
 import JSZip from "jszip";
 import { closeDb } from "@/db";
 import { BACKUP_DIR, DATA_DIR, DB_FILE, createBackup, formatBytes } from "@/lib/backup";
-import { getDataPersistenceInfo } from "@/lib/data-paths";
+import {
+  assertPersistentDataDir,
+  getDataPersistenceInfo,
+  resolveDataDir,
+} from "@/lib/data-paths";
 
 /** Env keys we care about for an exact Railway copy. */
 export const MIGRATION_ENV_KEYS = [
@@ -306,6 +310,8 @@ export function resolveMigrationPackPath(filename: string) {
  * Replaces live DB after safety backup. Requires confirmToken === "RESTORE".
  */
 export function importDatabaseBuffer(buf: Buffer, label = "upload") {
+  // Never import onto ephemeral image disk — that is how data "imports then vanishes".
+  assertPersistentDataDir(resolveDataDir());
   ensureDirs();
   if (!buf || buf.length < 100) throw new Error("Empty or invalid database upload");
   const header = buf.subarray(0, 16).toString("utf8");
