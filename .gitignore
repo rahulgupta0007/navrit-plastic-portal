@@ -30,13 +30,15 @@ yarn-error.log*
 
 # env files
 .env
-.env*.local
+.env.*
+!.env.example
 
 # database
 /data/*.db
 /data/*.db-*
 /data/backups/*.db
 /data/backups/*.sha256
+/data/backups/*.zip
 !/data/backups/.gitkeep
 
 # typescript

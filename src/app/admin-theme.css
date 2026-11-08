@@ -19,6 +19,8 @@
   background: var(--ad-bg);
   min-height: 100vh;
   font-family: var(--font-inter), system-ui, sans-serif;
+  /* Make native date/select popups use dark chrome on Windows/Chrome */
+  color-scheme: dark;
 }
 
 .admin-app.admin-light {
@@ -33,6 +35,7 @@
   --ad-accent-dim: rgba(22, 163, 74, 0.12);
   --ad-input: #f8fafc;
   --ad-shadow: 0 8px 24px rgba(15, 23, 42, 0.06);
+  color-scheme: light;
 }
 
 .admin-app * {
@@ -118,11 +121,208 @@
   padding: 0.55rem 0.75rem;
   font-size: 0.875rem;
   outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
 }
 
 .ad-input:focus {
   border-color: var(--ad-accent);
   box-shadow: 0 0 0 3px var(--ad-accent-dim);
+}
+
+.ad-input::placeholder {
+  color: var(--ad-muted);
+  opacity: 0.85;
+}
+
+/* Native selects: force readable option colors when OS respects them */
+.admin-app select.ad-input,
+.admin-app select {
+  color: var(--ad-text);
+  background-color: var(--ad-input);
+}
+
+.admin-app select option,
+.admin-app select optgroup {
+  background-color: #0f172a;
+  color: #f8fafc;
+}
+
+.admin-light select option,
+.admin-light select optgroup {
+  background-color: #ffffff;
+  color: #0f172a;
+}
+
+.ad-field {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.ad-field-label {
+  color: var(--ad-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.ad-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ad-select-chevron {
+  flex-shrink: 0;
+  opacity: 0.7;
+  transition: transform 0.18s ease;
+}
+
+.ad-select-chevron.open {
+  transform: rotate(180deg);
+}
+
+.ad-select-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  z-index: 40;
+  margin: 0;
+  padding: 0.35rem;
+  list-style: none;
+  border-radius: 0.75rem;
+  border: 1px solid var(--ad-border);
+  background: var(--ad-card);
+  box-shadow: var(--ad-shadow);
+  max-height: 240px;
+  overflow: auto;
+  animation: ad-menu-in 0.16s ease;
+}
+
+@keyframes ad-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ad-select-option {
+  width: 100%;
+  display: block;
+  text-align: left;
+  border: 0;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: var(--ad-text);
+  padding: 0.55rem 0.7rem;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+
+.ad-select-option:hover {
+  background: var(--ad-hover);
+}
+
+.ad-select-option.active {
+  background: var(--ad-accent-dim);
+  color: var(--ad-accent);
+  font-weight: 600;
+}
+
+.ad-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.ad-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 0.5rem;
+  border: 1px solid var(--ad-border);
+  background: color-mix(in srgb, var(--ad-input) 80%, transparent);
+  color: var(--ad-text);
+  padding: 0.3rem 0.55rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease, color 0.15s ease;
+}
+
+.ad-icon-btn:hover {
+  background: var(--ad-hover);
+  border-color: color-mix(in srgb, var(--ad-accent) 45%, var(--ad-border));
+  transform: translateY(-1px);
+}
+
+.ad-icon-btn:active {
+  transform: translateY(0);
+}
+
+.ad-icon-btn-accent {
+  color: var(--ad-accent);
+  border-color: color-mix(in srgb, var(--ad-accent) 35%, var(--ad-border));
+  background: var(--ad-accent-dim);
+}
+
+.ad-icon-btn-accent:hover {
+  filter: brightness(1.08);
+}
+
+.ad-icon-btn-danger {
+  color: #fca5a5;
+  border-color: rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.12);
+}
+
+.admin-light .ad-icon-btn-danger {
+  color: #b91c1c;
+}
+
+.ad-icon-btn-danger:hover {
+  background: rgba(239, 68, 68, 0.22);
+}
+
+.ad-fade-in {
+  animation: ad-rise 0.28s ease;
+}
+
+.ad-status-paid {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+}
+
+.ad-status-unpaid {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: rgba(245, 158, 11, 0.15);
+  color: #fbbf24;
 }
 
 .ad-nav-item {

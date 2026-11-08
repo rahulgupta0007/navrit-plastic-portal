@@ -1,0 +1,17 @@
+# Railway service config for NAVRIT.
+#
+# CRITICAL — data wipe fix:
+# The repo contains a `data/` folder, so /app/data exists in the image WITHOUT a
+# Volume. That disk is deleted on every deploy. You MUST attach a Volume:
+#
+#   Service → Settings → Volumes → Add volume
+#   Mount path: /app/data
+#
+# The app refuses to use ephemeral /app/data (same disk as the image).
+
+[build]
+builder = "nixpacks"
+
+[deploy]
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
