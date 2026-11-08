@@ -30,11 +30,26 @@ type PreStock = {
   id:number; mode:Mode; materialName:string; quantityKg:number; amount:number; stockDate:string; notes?:string;
 };
 
+const BUILTIN_EXPENSE_TYPES = [
+  "Electricity",
+  "Thread",
+  "GST / Admin",
+  "Infrastructure / Maintenance",
+  "Other",
+] as const;
+
+function expenseTypeLabel(type: string) {
+  return type === "Infrastructure / Maintenance" ? "Infra / Maint." : type;
+}
+
 export default function InventoryPage() {
   const { mode } = useBusinessMode();
   const [data,setData] = useState<any>(null);
   const [tab,setTab] = useState("purchases");
   const [expense,setExpense] = useState({expenseType:"Electricity",scope:"SHARED" as "MODE"|"SHARED",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY" as FundingSource});
+  const [customExpenseTypes,setCustomExpenseTypes] = useState<string[]>([]);
+  const [showNewExpenseType,setShowNewExpenseType] = useState(false);
+  const [newExpenseTypeName,setNewExpenseTypeName] = useState("");
   const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT" as "CONTRACT"|"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
@@ -319,12 +334,51 @@ export default function InventoryPage() {
     setSaleItems(items.length ? items.map((x:any)=>({materialCategory:x.material_category,materialVariant:x.material_variant,quantityKg:String(x.quantity_kg),ratePerKg:String(x.rate_per_kg)})) : [{materialCategory:s.material_category,materialVariant:s.material_variant==="MIXED"?"Green":s.material_variant,quantityKg:String(s.quantity_kg),ratePerKg:String(s.rate_per_kg||0)}]);
     window.scrollTo({top:0,behavior:"smooth"});
   }
+  const expenseTypeOptions = useMemo(() => {
+    const fromHistory = (data?.otherExpenses || [])
+      .map((x: any) => String(x.expense_type || "").trim())
+      .filter(Boolean);
+    const all = [...BUILTIN_EXPENSE_TYPES, ...customExpenseTypes, ...fromHistory];
+    const seen = new Set<string>();
+    return all.filter((type) => {
+      const key = type.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [data?.otherExpenses, customExpenseTypes]);
+
+  function selectExpenseType(type: string) {
+    setExpense((prev) => ({
+      ...prev,
+      expenseType: type,
+      scope: type === "Electricity" ? prev.scope : "MODE",
+    }));
+  }
+
+  function addNewExpenseType() {
+    const name = newExpenseTypeName.trim().replace(/\s+/g, " ");
+    if (!name) { setMessage("Enter a new expense type name"); return; }
+    if (name.length > 80) { setMessage("Expense type name is too long (max 80)"); return; }
+    const existing = expenseTypeOptions.find((t) => t.toLowerCase() === name.toLowerCase());
+    if (existing) {
+      selectExpenseType(existing);
+    } else {
+      setCustomExpenseTypes((prev) => [...prev, name]);
+      selectExpenseType(name);
+    }
+    setNewExpenseTypeName("");
+    setShowNewExpenseType(false);
+    setMessage(`Expense type ready: ${existing || name}`);
+  }
+
   async function addExpense() {
     const amount=Number(expense.amount||0);
     if(amount<=0) { setMessage("Enter a valid expense amount"); return; }
+    if(!expense.expenseType.trim()) { setMessage("Select or add an expense type"); return; }
     const expenseMode = expense.scope === "SHARED" ? "SHARED" : mode;
     const ok=await post("addOtherExpense",{mode:expenseMode,expenseType:expense.expenseType,description:expense.description,amount,expenseDate:expense.expenseDate,...(expense.expenseType==="Electricity"?{billingMonth:expense.billingMonth,billingStartDate:expense.billingStartDate,billingEndDate:expense.billingEndDate}:{}),paidBy:expense.paidBy||undefined,fundingSource:expense.fundingSource});
-    if(ok) setExpense({expenseType:"Electricity",scope:"SHARED",description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY"});
+    if(ok) setExpense({expenseType:expense.expenseType,scope:expense.scope,description:"",amount:"",expenseDate:new Date().toISOString().slice(0,10),billingMonth:new Date().toISOString().slice(0,7),billingStartDate:"",billingEndDate:"",paidBy:"",fundingSource:"COMPANY"});
   }
 
   function openSalePayment(s:any) {
@@ -1018,8 +1072,8 @@ export default function InventoryPage() {
             <h2 className="font-semibold">Add Business Expense</h2>
             <p className="mt-1 text-xs ad-muted">Electricity for both machines → choose <b>Shared (PET + Plastic)</b>. Company book records it once; Material Analysis allocates cost per kg by activity.</p>
           </div>
-          <div className="flex shrink-0 flex-wrap justify-end gap-1.5 sm:max-w-[55%]">
-            {(["Electricity","Thread","GST / Admin","Infrastructure / Maintenance","Other"] as const).map((type) => (
+          <div className="flex shrink-0 flex-wrap justify-end gap-1.5 sm:max-w-[60%]">
+            {expenseTypeOptions.map((type) => (
               <button
                 key={type}
                 type="button"
@@ -1029,19 +1083,47 @@ export default function InventoryPage() {
                     ? "border-[var(--ad-accent)] bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"
                     : "border-[var(--ad-border)] text-[var(--ad-muted)] hover:border-[var(--ad-accent)]/50 hover:text-[var(--ad-text)]")
                 }
-                onClick={() =>
-                  setExpense({
-                    ...expense,
-                    expenseType: type,
-                    scope: type === "Electricity" ? expense.scope : "MODE",
-                  })
-                }
+                onClick={() => selectExpenseType(type)}
               >
-                {type === "Infrastructure / Maintenance" ? "Infra / Maint." : type}
+                {expenseTypeLabel(type)}
               </button>
             ))}
+            <button
+              type="button"
+              className={
+                "rounded-lg border border-dashed px-2.5 py-1.5 text-[11px] font-semibold transition " +
+                (showNewExpenseType
+                  ? "border-[var(--ad-accent)] bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"
+                  : "border-[var(--ad-border)] text-[var(--ad-muted)] hover:border-[var(--ad-accent)]/50 hover:text-[var(--ad-text)]")
+              }
+              onClick={() => setShowNewExpenseType((v) => !v)}
+            >
+              + Add type
+            </button>
           </div>
         </div>
+        {showNewExpenseType && (
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center">
+            <input
+              className="ad-input sm:max-w-xs"
+              placeholder="New expense type name"
+              value={newExpenseTypeName}
+              onChange={(e) => setNewExpenseTypeName(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNewExpenseType(); } }}
+              autoFocus
+            />
+            <div className="flex gap-2">
+              <button type="button" className="ad-btn ad-btn-primary" onClick={addNewExpenseType}>Add</button>
+              <button
+                type="button"
+                className="ad-btn"
+                onClick={() => { setShowNewExpenseType(false); setNewExpenseTypeName(""); }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
         <div className="grid gap-2 md:grid-cols-6">
           <select className="ad-input" value={expense.scope} onChange={e=>setExpense({...expense,scope:e.target.value as "MODE"|"SHARED"})}>
             <option value="SHARED">Shared (PET + Plastic)</option>

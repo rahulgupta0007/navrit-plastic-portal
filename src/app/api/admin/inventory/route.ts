@@ -1107,7 +1107,7 @@ export async function POST(req: NextRequest) {
     if (body.action === "addOtherExpense") {
       const x = z.object({
         mode: expenseModeSchema,
-        expenseType: z.enum(["Electricity","Thread","GST / Admin","Infrastructure / Maintenance","Other"]),
+        expenseType: z.string().trim().min(1, "Expense type is required").max(80).transform((v) => v.replace(/\s+/g, " ")),
         description: z.string().trim().optional().default(""),
         amount: z.number().positive(),
         expenseDate: dateSchema.optional().default(todayStr()),
