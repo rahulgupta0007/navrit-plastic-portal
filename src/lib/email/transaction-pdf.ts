@@ -18,6 +18,16 @@ function money(n: number) {
   return `INR ${Number(n || 0).toFixed(2)}`;
 }
 
+/** Helvetica/WinAnsi cannot encode ₹ and many Unicode glyphs — normalize for PDF. */
+function pdfSafe(text: string) {
+  return String(text || "")
+    .replace(/₹/g, "INR ")
+    .replace(/[^\x20-\x7E\u00A0-\u00FF]/g, "?")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 110);
+}
+
 export async function buildTransactionSlipPdf(data: TransactionSlipData): Promise<Buffer> {
   const doc = await PDFDocument.create();
   const page = doc.addPage([595, 842]);
@@ -29,7 +39,8 @@ export async function buildTransactionSlipPdf(data: TransactionSlipData): Promis
   let y = 800;
 
   const draw = (text: string, opts?: { size?: number; font?: typeof font; color?: typeof black; x?: number }) => {
-    const safe = String(text || "").slice(0, 110);
+    const safe = pdfSafe(text);
+    if (!safe) return;
     page.drawText(safe, {
       x: opts?.x ?? 40,
       y,

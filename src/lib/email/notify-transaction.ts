@@ -79,7 +79,22 @@ export async function notifyTransactionEmail(
   const biz = businessEnv();
   const filename = `NAVRIT-${opts.eventType}-${opts.refId || Date.now()}.pdf`;
 
-  let pdf: Buffer;
+  const text = [
+    opts.docTitle,
+    ...opts.fields.map((f) => `${f.label}: ${f.value}`),
+    opts.amount != null ? `${opts.amountLabel || "Amount"}: INR ${Number(opts.amount).toFixed(2)}` : "",
+    opts.notes ? `Notes: ${opts.notes}` : "",
+    `Sent to: ${to}`,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const html = `<pre style="font-family:ui-monospace,monospace;font-size:13px;line-height:1.45">${text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")}</pre>`;
+
+  let pdf: Buffer | null = null;
+  let pdfError = "";
   try {
     pdf = await buildTransactionSlipPdf({
       docTitle: opts.docTitle,
@@ -91,35 +106,19 @@ export async function notifyTransactionEmail(
       generatedAt: nowIso(),
     });
   } catch (e) {
-    return {
-      configured: true,
-      skipped: false,
-      ok: false,
-      error: e instanceof Error ? e.message : "PDF failed",
-    };
+    pdfError = e instanceof Error ? e.message : "PDF failed";
   }
 
-  const text = [
-    opts.docTitle,
-    ...opts.fields.map((f) => `${f.label}: ${f.value}`),
-    opts.amount != null ? `${opts.amountLabel || "Amount"}: ₹${Number(opts.amount).toFixed(2)}` : "",
-    opts.notes ? `Notes: ${opts.notes}` : "",
-    `Sent to: ${to}`,
-  ]
-    .filter(Boolean)
-    .join("\n");
-
-  const html = `<pre style="font-family:ui-monospace,monospace;font-size:13px;line-height:1.45">${text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")}</pre>`;
-
+  // Prefer PDF slip; if PDF build fails, still email the body so office is notified.
   const sent = await sendMailWithPdf({
     to: recipients,
     subject: opts.subject,
-    text,
+    text: pdfError ? `${text}\n\n(PDF attachment skipped: ${pdfError})` : text,
     html,
-    filename,
-    pdf,
+    filename: pdf ? filename : "navrit-slip-fallback.pdf",
+    pdf:
+      pdf ||
+      Buffer.from("%PDF-1.1\n1 0 obj<<>>endobj\ntrailer<<>>\n%%EOF\n", "utf8"),
   });
 
   const refId = opts.refId || 0;
@@ -172,7 +171,8 @@ export const TRANSACTION_EMAIL_ACTIONS = new Set([
 ]);
 
 function money(n: unknown) {
-  return `₹${Number(n || 0).toFixed(2)}`;
+  // Helvetica (pdf-lib StandardFonts) cannot encode ₹ — use ASCII for slip fields.
+  return `INR ${Number(n || 0).toFixed(2)}`;
 }
 
 function str(v: unknown, fallback = "—") {
