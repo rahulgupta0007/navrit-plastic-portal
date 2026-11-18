@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { createHash, timingSafeEqual } from "crypto";
 import { z } from "zod";
-import { sqlite } from "@/db";
+import { openDemoSqlite, sqlite } from "@/db";
 import { createSession, type SessionRole } from "@/lib/auth";
+import { enterDbScope } from "@/lib/db-context";
 import { ensureDemoBusinessData, isDemoCredentials, DEMO_USERNAME } from "@/lib/demo-data";
 
 export const dynamic = "force-dynamic";
@@ -89,11 +90,12 @@ export async function POST(req: NextRequest) {
     role = "readonly";
     sessionUser = readonlyUser!;
   } else if (isDemoCredentials(username, password)) {
-    // Built-in showcase login — always available; view-only with sample ledgers.
+    // Built-in showcase login — isolated demo DB only (never touches live ledgers).
     role = "readonly";
     sessionUser = DEMO_USERNAME;
     try {
-      ensureDemoBusinessData(sqlite);
+      enterDbScope("demo");
+      ensureDemoBusinessData(openDemoSqlite());
     } catch {
       /* demo seed is best-effort */
     }

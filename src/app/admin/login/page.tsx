@@ -108,7 +108,8 @@ export default function AdminLoginPage() {
                 Password <code className="rounded bg-[#f3f8f6] px-1.5 py-0.5 font-semibold">demo123</code>
               </p>
               <p className="mt-1 text-[11px] text-[#042821]/55">
-                Loads sample purchases, sales, expenses, stock and labour so you can explore the portal.
+                Uses a separate sample database (not your live company data) with purchases, sales,
+                expenses, stock and labour.
               </p>
               <button
                 type="button"

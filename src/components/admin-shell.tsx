@@ -379,9 +379,9 @@ export function AdminShell({
                 <p>
                   {isDemoUser ? (
                     <>
-                      <strong className="text-[var(--ad-text)]">Demo account</strong> — sample
-                      purchases, sales, expenses, stock and labour are loaded for exploration.
-                      Saving, editing, deletes, and backups are disabled.
+                      <strong className="text-[var(--ad-text)]">Demo account</strong> — you are on a
+                      separate sample database (not live company data). Saving, editing, deletes, and
+                      backups are disabled.
                     </>
                   ) : (
                     <>
