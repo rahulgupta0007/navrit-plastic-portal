@@ -4,6 +4,7 @@ import { createHash, timingSafeEqual } from "crypto";
 import { z } from "zod";
 import { sqlite } from "@/db";
 import { createSession, type SessionRole } from "@/lib/auth";
+import { ensureDemoBusinessData, isDemoCredentials, DEMO_USERNAME } from "@/lib/demo-data";
 
 export const dynamic = "force-dynamic";
 
@@ -87,12 +88,25 @@ export async function POST(req: NextRequest) {
   } else if (envCredsMatch(username, password, readonlyUser, readonlyPass)) {
     role = "readonly";
     sessionUser = readonlyUser!;
+  } else if (isDemoCredentials(username, password)) {
+    // Built-in showcase login — always available; view-only with sample ledgers.
+    role = "readonly";
+    sessionUser = DEMO_USERNAME;
+    try {
+      ensureDemoBusinessData(sqlite);
+    } catch {
+      /* demo seed is best-effort */
+    }
   }
 
   if (role) {
     clearFailures(key);
     await createSession(sessionUser, role);
-    return NextResponse.json({ ok: true, role });
+    return NextResponse.json({
+      ok: true,
+      role,
+      demo: sessionUser === DEMO_USERNAME,
+    });
   }
 
   // Production-style: when admin env creds exist, do not fall through to DB users.
