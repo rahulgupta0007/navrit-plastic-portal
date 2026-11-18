@@ -208,7 +208,12 @@ export function AdminShell({
   }, []);
 
   const headerActions = canWrite ? actions : null;
-  const displayName = role === "readonly" ? sessionUser || "Viewer" : owner.split(" ")[0];
+  const isDemoUser = sessionUser.trim().toLowerCase() === "demo";
+  const displayName = isDemoUser
+    ? "Demo"
+    : role === "readonly"
+      ? sessionUser || "Viewer"
+      : owner.split(" ")[0];
 
   return (
     <div className={clsx("admin-app", !dark && "admin-light")} data-readonly={role === "readonly" ? "1" : undefined}>
@@ -372,8 +377,18 @@ export function AdminShell({
               <div className="mb-4 flex items-start gap-2 rounded-lg border border-[var(--ad-border)] bg-[var(--ad-accent-dim)]/40 px-3 py-2 text-xs text-[var(--ad-muted)]">
                 <Eye size={14} className="mt-0.5 shrink-0 text-[var(--ad-accent)]" />
                 <p>
-                  <strong className="text-[var(--ad-text)]">View-only login</strong> — you can browse
-                  all ledgers and reports. Saving, editing, deletes, and backups are disabled.
+                  {isDemoUser ? (
+                    <>
+                      <strong className="text-[var(--ad-text)]">Demo account</strong> — sample
+                      purchases, sales, expenses, stock and labour are loaded for exploration.
+                      Saving, editing, deletes, and backups are disabled.
+                    </>
+                  ) : (
+                    <>
+                      <strong className="text-[var(--ad-text)]">View-only login</strong> — you can browse
+                      all ledgers and reports. Saving, editing, deletes, and backups are disabled.
+                    </>
+                  )}
                 </p>
               </div>
             ) : null}

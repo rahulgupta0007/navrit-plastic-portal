@@ -10,6 +10,7 @@ import {
   resolveDbFile,
   tryRestoreDbFromBackups,
 } from "@/lib/data-paths";
+import { ensureDemoBusinessData } from "@/lib/demo-data";
 
 // Production / Railway data MUST live on a persistent Volume (default /app/data).
 const dataDir = resolveDataDir();
@@ -703,6 +704,25 @@ function createDb() {
       WHERE sale_id IS NULL AND transaction_type = 'ADJUSTMENT' AND notes LIKE 'SALE #%'`);
   } catch { /* legacy rows may not exist */ }
   seedSiteContent(sqlite);
+  // Optional / empty-ledger demo sample (idempotent). Forced with SEED_DEMO_DATA=1.
+  try {
+    const force = process.env.SEED_DEMO_DATA === "1";
+    const purchases = Number(
+      (sqlite.prepare("SELECT COUNT(*) AS c FROM purchases").get() as { c?: number } | undefined)?.c || 0
+    );
+    const expenses = Number(
+      (sqlite.prepare("SELECT COUNT(*) AS c FROM other_expenses").get() as { c?: number } | undefined)?.c || 0
+    );
+    const sales = Number(
+      (sqlite.prepare("SELECT COUNT(*) AS c FROM sales").get() as { c?: number } | undefined)?.c || 0
+    );
+    if (force || (purchases === 0 && expenses === 0 && sales === 0)) {
+      const result = ensureDemoBusinessData(sqlite);
+      if (result.seeded) console.info("[navrit] Demo business sample data loaded");
+    }
+  } catch (error) {
+    console.warn("[navrit] Demo seed skipped", error);
+  }
   return sqlite;
 }
 
