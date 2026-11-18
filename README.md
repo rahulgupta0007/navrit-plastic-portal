@@ -28,6 +28,8 @@ Default login (from `.env.local`): `admin` / `admin123`
 
 **Demo user (built-in):** `demo` / `demo123` — view-only showcase login. On first use it loads sample purchases, sales, expenses, stock and labour so the portal is not empty. Override with `DEMO_USERNAME` / `DEMO_PASSWORD`. Force reseed with `SEED_DEMO_DATA=1`.
 
+**Direct demo link:** `/demo` automatically creates a read-only session and opens `/admin` (no manual credentials). The login page's **Explore demo dashboard** button does the same. Important: the current read-only role is connected to the same SQLite database as admin, so visitors may see real business records in addition to samples. **For public promotion, deploy a separate demo service backed by a sample-only database.**
+
 **View-only user (optional):** set `READONLY_USERNAME` + `READONLY_PASSWORD` in `.env.local` / Railway Variables. That login can browse all ledgers and reports but cannot save, edit, delete, or use Backup.
 
 ## Features

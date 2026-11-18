@@ -35,6 +35,25 @@ export default function AdminLoginPage() {
     router.refresh();
   }
 
+  async function onDemoLogin() {
+    if (loading) return;
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/demo", {
+        method: "POST",
+        credentials: "same-origin",
+        cache: "no-store",
+      });
+      if (!response.ok) throw new Error("Demo sign-in is unavailable. Please try again.");
+      router.replace("/admin");
+      router.refresh();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to open demo.");
+      setLoading(false);
+    }
+  }
+
   return (
     <div className="grid min-h-screen lg:grid-cols-2">
       {/* Brand panel */}
@@ -113,13 +132,10 @@ export default function AdminLoginPage() {
               <button
                 type="button"
                 className="mt-3 w-full rounded-xl border border-[#042821]/12 bg-[#f3f8f6] px-3 py-2 text-sm font-semibold text-[#042821] transition hover:border-[#0b5c4d]/40 hover:bg-white"
-                onClick={() => {
-                  setUsername("demo");
-                  setPassword("demo123");
-                  setError("");
-                }}
+                onClick={onDemoLogin}
+                disabled={loading}
               >
-                Use demo account
+                {loading ? "Opening demo…" : "Explore demo dashboard"}
               </button>
             </div>
 
