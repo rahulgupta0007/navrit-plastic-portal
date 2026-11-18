@@ -12,5 +12,6 @@ export async function GET() {
     username: session.username,
     role: session.role,
     canWrite: canWrite(session),
+    demo: Boolean(session.demo),
   });
 }
