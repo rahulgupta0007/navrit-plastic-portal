@@ -16,6 +16,9 @@ import {
   notifyTransactionEmail,
 } from "@/lib/email/notify-transaction";
 import { emailConfigDiagnostics, isEmailConfigured, sendTestEmail } from "@/lib/email/gmail";
+import { purgeDemoPollutionFromLiveDb } from "@/lib/purge-demo-pollution";
+
+let demoPollutionPurgedThisProcess = false;
 
 function workerWageDue(workerId: number, dailyRate: number, mode?: string) {
   const rows = mode
@@ -673,6 +676,16 @@ function orphanVendorNeed(mode: string, supplierId: number) {
 
 export async function GET() {
   if (!(await guard())) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  // Strip leaked Demo* sample rows from the live ledger (safe patterns only).
+  if (!demoPollutionPurgedThisProcess) {
+    demoPollutionPurgedThisProcess = true;
+    try {
+      purgeDemoPollutionFromLiveDb(sqlite);
+    } catch {
+      /* ignore */
+    }
+  }
 
   // Heal historical double-counts: orphan CREDIT_SETTLEMENT + Payment-date PURCHASE rows.
   withTransaction(() => {

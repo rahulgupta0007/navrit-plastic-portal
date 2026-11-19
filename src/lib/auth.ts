@@ -1,14 +1,11 @@
 import { SignJWT, jwtVerify } from "jose";
 import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { enterDbScope } from "@/lib/db-context";
-import { DEMO_USERNAME } from "@/lib/demo-data";
 
 const COOKIE = "plastic_admin_session";
-const DEMO_DB_COOKIE = "navrit_demo_db";
 
 export type SessionRole = "admin" | "readonly";
-export type Session = { username: string; role: SessionRole; demo?: boolean };
+export type Session = { username: string; role: SessionRole };
 
 function secret() {
   const s = process.env.AUTH_SECRET;
@@ -16,13 +13,8 @@ function secret() {
   return new TextEncoder().encode(s);
 }
 
-function isDemoUsername(username: string) {
-  return username.trim().toLowerCase() === DEMO_USERNAME.trim().toLowerCase();
-}
-
 export async function createSession(username: string, role: SessionRole = "admin") {
-  const demo = isDemoUsername(username);
-  const token = await new SignJWT({ username, role, demo })
+  const token = await new SignJWT({ username, role })
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
     .setExpirationTime("7d")
@@ -36,47 +28,23 @@ export async function createSession(username: string, role: SessionRole = "admin
     path: "/",
     maxAge: 60 * 60 * 24 * 7,
   });
-  if (demo) {
-    jar.set(DEMO_DB_COOKIE, "1", {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: process.env.NODE_ENV === "production",
-      path: "/",
-      maxAge: 60 * 60 * 24 * 7,
-    });
-    enterDbScope("demo");
-  } else {
-    jar.delete(DEMO_DB_COOKIE);
-    enterDbScope("live");
-  }
 }
 
 export async function destroySession() {
   const jar = await cookies();
   jar.delete(COOKIE);
-  jar.delete(DEMO_DB_COOKIE);
-  enterDbScope("live");
 }
 
 export async function getSession(): Promise<Session | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE)?.value;
-  if (!token) {
-    enterDbScope("live");
-    return null;
-  }
+  if (!token) return null;
   try {
     const { payload } = await jwtVerify(token, secret());
-    if (typeof payload.username !== "string") {
-      enterDbScope("live");
-      return null;
-    }
+    if (typeof payload.username !== "string") return null;
     const role: SessionRole = payload.role === "readonly" ? "readonly" : "admin";
-    const demo = payload.demo === true || isDemoUsername(payload.username);
-    enterDbScope(demo ? "demo" : "live");
-    return { username: payload.username, role, demo };
+    return { username: payload.username, role };
   } catch {
-    enterDbScope("live");
     return null;
   }
 }
