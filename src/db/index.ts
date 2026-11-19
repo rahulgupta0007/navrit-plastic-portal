@@ -697,6 +697,40 @@ function createDb() {
   // Sale-linked side costs (Plastic transport/loading/labour) — after SHARED rebuild.
   try { sqlite.exec("ALTER TABLE other_expenses ADD COLUMN sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE"); } catch { /* exists */ }
   try { sqlite.exec("CREATE INDEX IF NOT EXISTS other_expenses_sale_idx ON other_expenses(sale_id)"); } catch { /* ignore */ }
+
+  // Machine purchases + factory/setup costs (capital outlays linked into other_expenses for cash book).
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS machines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
+      name TEXT NOT NULL,
+      vendor_name TEXT NOT NULL DEFAULT '',
+      purchase_date TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      other_expense_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS machines_mode_date_idx ON machines(mode, purchase_date);
+    CREATE TABLE IF NOT EXISTS machine_setups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
+      machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      setup_date TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      other_expense_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS machine_setups_mode_date_idx ON machine_setups(mode, setup_date);
+  `);
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.
   try {

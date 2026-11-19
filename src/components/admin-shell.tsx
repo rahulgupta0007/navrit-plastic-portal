@@ -22,6 +22,7 @@ import {
   Users,
   WalletCards,
   Factory,
+  Cog,
   Eye,
 } from "lucide-react";
 import { NaviFloat } from "@/components/navi-float";
@@ -35,6 +36,7 @@ const navByMode = {
     { href: "/admin/vendors", label: "Vendors & Buyers", icon: Users },
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
+    { href: "/admin/machines", label: "Machine & Setup", icon: Cog },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
     { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
@@ -45,6 +47,7 @@ const navByMode = {
     { href: "/admin/vendors", label: "Vendors & Buyers", icon: Users },
     { href: "/admin/material-analysis", label: "Material & Profit Analysis", icon: LineChart },
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
+    { href: "/admin/machines", label: "Machine & Setup", icon: Cog },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
     { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
     { href: "/admin/backup", label: "Backup", icon: HardDrive },
