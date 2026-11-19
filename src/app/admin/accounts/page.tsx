@@ -5,7 +5,6 @@ import Link from "next/link";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ACCOUNT_PERSONS, isAccountPerson, type AccountPerson } from "@/lib/account-persons";
-import { AdminSelect } from "@/components/admin-select";
 import { PersonSelect } from "@/components/person-select";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, X } from "lucide-react";
 
@@ -199,7 +198,7 @@ export default function AccountsPage() {
     } finally {
       setLoading(false);
     }
-  }, [mode]);
+  }, []);
 
   useEffect(() => {
     void load();

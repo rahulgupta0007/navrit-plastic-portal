@@ -525,10 +525,6 @@ function creditContractorEarn(opts: {
   return { contractorId: contractor.id, amount, rate };
 }
 
-function modeCashflow(m: string) {
-  return modeCashflowParts(m).book;
-}
-
 type CashflowParts = ReturnType<typeof modeCashflowParts>;
 
 /** One firm-wide cash book = PET activity + Plastic activity. */
@@ -1441,7 +1437,7 @@ export async function POST(req: NextRequest) {
         const line = resolved[i];
         const lineTransport = i === 0 ? transportCharges : 0;
         const lineLoading = i === 0 ? loadingCharges : 0;
-        let cashPaid = Math.min(cashRemaining, line.total);
+        const cashPaid = Math.min(cashRemaining, line.total);
         cashRemaining = Math.round((cashRemaining - cashPaid) * 100) / 100;
 
         let advanceApplied = 0;

@@ -1,6 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "fs";
-import path from "path";
 import {
   assertPersistentDataDir,
   findExistingDbCandidates,
