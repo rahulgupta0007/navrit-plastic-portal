@@ -457,6 +457,8 @@ function createDb() {
     "ALTER TABLE processing_manual_labour ADD COLUMN hours REAL NOT NULL DEFAULT 0",
     "ALTER TABLE processing_manual_labour ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'WAGE'",
     "ALTER TABLE sales ADD COLUMN labour_mode TEXT NOT NULL DEFAULT 'CONTRACT'",
+    "ALTER TABLE sales ADD COLUMN transport_charges REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE sale_processing_costs ADD COLUMN transport_cost REAL NOT NULL DEFAULT 0",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
@@ -661,6 +663,7 @@ function createDb() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
           purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,
+          sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE,
           expense_type TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
           amount REAL NOT NULL CHECK(amount >= 0),
@@ -676,8 +679,8 @@ function createDb() {
       `);
       sqlite.exec(`
         INSERT INTO other_expenses_new
-        (id,mode,purchase_id,expense_type,description,amount,expense_date,created_at,expense_frequency,paid_by,billing_month,billing_start_date,billing_end_date,funding_source)
-        SELECT id,mode,purchase_id,expense_type,description,amount,expense_date,created_at,
+        (id,mode,purchase_id,sale_id,expense_type,description,amount,expense_date,created_at,expense_frequency,paid_by,billing_month,billing_start_date,billing_end_date,funding_source)
+        SELECT id,mode,purchase_id,NULL,expense_type,description,amount,expense_date,created_at,
                COALESCE(expense_frequency,'ONE_TIME'), COALESCE(paid_by,''), COALESCE(billing_month,''),
                COALESCE(billing_start_date,''), COALESCE(billing_end_date,''), COALESCE(funding_source,'COMPANY')
         FROM other_expenses
@@ -692,6 +695,9 @@ function createDb() {
     try { sqlite.exec("PRAGMA foreign_keys=ON"); } catch { /* ignore */ }
     throw error;
   }
+  // Sale-linked side costs (Plastic transport/loading/labour) — after SHARED rebuild.
+  try { sqlite.exec("ALTER TABLE other_expenses ADD COLUMN sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE"); } catch { /* exists */ }
+  try { sqlite.exec("CREATE INDEX IF NOT EXISTS other_expenses_sale_idx ON other_expenses(sale_id)"); } catch { /* ignore */ }
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.
   try {

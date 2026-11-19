@@ -50,7 +50,7 @@ export default function InventoryPage() {
   const [customExpenseTypes,setCustomExpenseTypes] = useState<string[]>([]);
   const [showNewExpenseType,setShowNewExpenseType] = useState(false);
   const [newExpenseTypeName,setNewExpenseTypeName] = useState("");
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT" as "CONTRACT"|"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY" as FundingSource,labourMode:"CONTRACT" as "CONTRACT"|"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
@@ -143,7 +143,15 @@ export default function InventoryPage() {
   const saleTotalWeight=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0),0);
   const saleLabourCharges=mode==="PET"&&sale.labourMode==="CONTRACT"?saleTotalWeight*2:0;
   const saleLoadingCharges=Number(sale.loadingCharges||0);
-  const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
+  const saleTransportCharges=mode==="PLASTIC"?Number(sale.transportCharges||0):0;
+  const saleSideLabourCharges=mode==="PLASTIC"?Number(sale.sideLabourCharges||0):0;
+  // PET: loading + contract labour reduce buyer amount. Plastic: buyer pays full gross;
+  // transport / loading / labour are company-paid side costs (not deducted).
+  const saleFinalAmount=mode==="PLASTIC"
+    ? saleGrossAmount
+    : Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
+  const plasticSideCostsTotal=saleLoadingCharges+saleTransportCharges+saleSideLabourCharges;
+  const plasticNeedsPayBy=mode==="PLASTIC"&&plasticSideCostsTotal>0;
   const modeBuyers=useMemo(()=>{
     const registered=((data?.buyers||[]) as any[]).filter((b:any)=>b.mode===mode&&b.name);
     if (registered.length) return registered;
@@ -265,7 +273,7 @@ export default function InventoryPage() {
 
   function resetSaleForm() {
     setEditingSale(null);
-    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT",saleDate:new Date().toISOString().slice(0,10),notes:""});
+    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY",labourMode:"CONTRACT",saleDate:new Date().toISOString().slice(0,10),notes:""});
     setSaleItems([defaultSaleItem()]);
   }
 
@@ -304,13 +312,21 @@ export default function InventoryPage() {
         materialVariant: items[idx]?.materialVariant ?? "Green",
       })));
     }
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,saleDate:sale.saleDate,useAdvance,notes:sale.notes});
+    if (mode==="PLASTIC" && (Number(sale.loadingCharges||0)>0 || Number(sale.transportCharges||0)>0 || Number(sale.sideLabourCharges||0)>0) && !sale.chargesPaidBy) {
+      setMessage("Please select Payment done by for transport / loading / labour");
+      return;
+    }
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:sale.labourMode,saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
   async function editSale() {
     if(editingSale===null) return;
-    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    if (mode==="PLASTIC" && (Number(sale.loadingCharges||0)>0 || Number(sale.transportCharges||0)>0 || Number(sale.sideLabourCharges||0)>0) && !sale.chargesPaidBy) {
+      setMessage("Please select Payment done by for transport / loading / labour");
+      return;
+    }
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:sale.labourMode,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -327,6 +343,10 @@ export default function InventoryPage() {
       receivedBy:latestPayment?.received_by||"",
       paymentMode:latestPayment?.payment_mode||"Cash",
       loadingCharges:String(s.loading_charges??""),
+      transportCharges:String(s.transport_charges??""),
+      sideLabourCharges: mode==="PLASTIC" ? String(s.labour_charges??"") : "",
+      chargesPaidBy:"",
+      chargesFunding:"COMPANY" as FundingSource,
       labourMode:(s.labour_mode==="DAILY_WAGE" || (Number(s.labour_charges||0)<=0 && mode==="PET")) ? "DAILY_WAGE" : "CONTRACT",
       saleDate:s.sale_date,
       notes:s.notes||""
@@ -1018,7 +1038,24 @@ export default function InventoryPage() {
             </span>
           )}
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
+          {mode==="PLASTIC" && (
+            <input className="ad-input" type="number" min="0" placeholder="Transport Charges" value={sale.transportCharges||""} onChange={e=>setSale({...sale,transportCharges:e.target.value})}/>
+          )}
+          {mode==="PLASTIC" && (
+            <input className="ad-input" type="number" min="0" placeholder="Labour (if any)" value={sale.sideLabourCharges||""} onChange={e=>setSale({...sale,sideLabourCharges:e.target.value})}/>
+          )}
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
+          {mode==="PLASTIC" && plasticSideCostsTotal>0 && (
+            <span className="ad-input flex items-center text-xs md:col-span-4 text-[var(--ad-muted)]">
+              Company side costs (not deducted from buyer): Loading ₹{saleLoadingCharges.toFixed(2)} + Transport ₹{saleTransportCharges.toFixed(2)} + Labour ₹{saleSideLabourCharges.toFixed(2)} = ₹{plasticSideCostsTotal.toFixed(2)}
+            </span>
+          )}
+          {plasticNeedsPayBy && (
+            <>
+              <PersonSelect value={sale.chargesPaidBy} onChange={(v)=>setSale({...sale,chargesPaidBy:v})} label="Payment done by" />
+              <FundingSelect value={sale.chargesFunding} onChange={(v)=>setSale({...sale,chargesFunding:v})} />
+            </>
+          )}
           {buyerAdvanceAvail>0 && editingSale===null && <label className="ad-input flex items-center gap-2 text-sm md:col-span-4 border border-[var(--ad-accent)]">
             <input type="checkbox" checked={useAdvance} onChange={e=>setUseAdvance(e.target.checked)}/>
             <span><b>{sale.customerName.trim()}</b> has advance ₹{buyerAdvanceAvail.toFixed(2)} with us. {useAdvance?`₹${advanceWillApply.toFixed(2)} will be adjusted in this sale; cash/UPI to collect: ₹${cashAfterAdvance.toFixed(2)}.`:"Advance will not be used for this sale."}</span>
@@ -1029,7 +1066,7 @@ export default function InventoryPage() {
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={editingSale ? editSale : addSale}>{editingSale ? "Update Sale" : "Save Full Truck Sale"}</button>{editingSale&&<button className="ad-btn ad-btn-ghost" onClick={resetSaleForm}>Cancel</button>}
         </div>
-        <p className="mt-2 text-xs ad-muted">{mode==="PET"?"Choose Contract ₹2/kg (contractor earn) or Daily wage (mark/pay attendance in Labour Management — sale amount is not reduced).":"Plastic sales use material types with no ₹2/kg process labour deduction."} Loading charges are sale-specific. GST is intentionally not included for now.</p>
+        <p className="mt-2 text-xs ad-muted">{mode==="PET"?"Choose Contract ₹2/kg (contractor earn) or Daily wage (mark/pay attendance in Labour Management — sale amount is not reduced). Loading charges reduce buyer final amount.":"Plastic: buyer Final Amount = Gross Sale. Transport / Loading / Labour you pay are separate company costs (with Payment done by) — not deducted from gross/final. Tracked in expenses & analysis like purchase transport/loading."} GST is intentionally not included for now.</p>
       </div>
       {salePay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
         <h3 className="mb-3 text-sm font-semibold">Receive sale payment — sale #{salePay.saleId}</h3>

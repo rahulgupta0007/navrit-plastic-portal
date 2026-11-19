@@ -149,8 +149,8 @@ function syncPurchaseSideCosts(opts: {
     .run(opts.purchaseId);
   const insert = sqlite.prepare(`
     INSERT INTO other_expenses
-    (mode,purchase_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source)
-    VALUES (?,?,?,?,?,?,'ONE_TIME',?,?,?,?,?,?)
+    (mode,purchase_id,sale_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source)
+    VALUES (?,?,NULL,?,?,?,?,'ONE_TIME',?,?,?,?,?,?)
   `);
   if (transport > 0.005) {
     insert.run(
@@ -185,6 +185,55 @@ function syncPurchaseSideCosts(opts: {
     );
   }
   return { transport, loading, landedExtra: Math.round((transport + loading) * 100) / 100 };
+}
+
+/**
+ * Plastic sale side costs we pay (transport / loading / labour) — separate from buyer sale total.
+ * Recorded on sale_processing_costs + other_expenses for cash book and analysis.
+ */
+function syncSaleSideCosts(opts: {
+  mode: string;
+  saleId: number;
+  transportCharges: number;
+  loadingCharges: number;
+  labourCharges: number;
+  expenseDate: string;
+  paidBy: string;
+  fundingSource: string;
+}) {
+  const transport = Math.round(Math.max(0, Number(opts.transportCharges) || 0) * 100) / 100;
+  const loading = Math.round(Math.max(0, Number(opts.loadingCharges) || 0) * 100) / 100;
+  const labour = Math.round(Math.max(0, Number(opts.labourCharges) || 0) * 100) / 100;
+  const paidBy = opts.paidBy || "";
+  const funding = opts.fundingSource || "COMPANY";
+
+  sqlite.prepare("DELETE FROM other_expenses WHERE sale_id=? AND expense_type IN ('Transport','Loading','Labour')").run(opts.saleId);
+  sqlite.prepare("DELETE FROM sale_processing_costs WHERE sale_id=?").run(opts.saleId);
+
+  const insertExp = sqlite.prepare(`
+    INSERT INTO other_expenses
+    (mode,purchase_id,sale_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source)
+    VALUES (?,NULL,?,?,?,?,?,'ONE_TIME',?,?,?,?,?,?)
+  `);
+  if (transport > 0.005) {
+    insertExp.run(opts.mode, opts.saleId, "Transport", `Driver / transport for sale #${opts.saleId}`, transport, opts.expenseDate, paidBy, nowIso(), "", "", "", funding);
+  }
+  if (loading > 0.005) {
+    insertExp.run(opts.mode, opts.saleId, "Loading", `Outside loading for sale #${opts.saleId}`, loading, opts.expenseDate, paidBy, nowIso(), "", "", "", funding);
+  }
+  if (labour > 0.005) {
+    insertExp.run(opts.mode, opts.saleId, "Labour", `Sale labour for sale #${opts.saleId}`, labour, opts.expenseDate, paidBy, nowIso(), "", "", "", funding);
+  }
+
+  if (transport > 0.005 || loading > 0.005 || labour > 0.005) {
+    sqlite.prepare(`
+      INSERT INTO sale_processing_costs
+      (mode,sale_id,labour_kg,labour_rate,labour_cost,loading_cost,paid_by,payment_date,created_at,funding_source,transport_cost)
+      VALUES (?,?,0,0,?,?,?,?,?,?,?)
+    `).run(opts.mode, opts.saleId, labour, loading, paidBy, opts.expenseDate, nowIso(), funding, transport);
+  }
+
+  return { transport, loading, labour };
 }
 
 function getAvailableStock(mode: string, materialName: string, date: string, excludeSaleId?: number) {
@@ -266,7 +315,7 @@ const companyFundedVendorSql = `SELECT COALESCE(SUM(amount),0) as n FROM vendor_
   AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 const companyFundedExpenseSql = `SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 const companyFundedProcessingSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
-const companyFundedSaleProcSql = `SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
+const companyFundedSaleProcSql = `SELECT COALESCE(SUM(labour_cost + loading_cost + COALESCE(transport_cost,0)),0) as n FROM sale_processing_costs WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'`;
 // Attendance-only rows do not hit cash; WAGE + ADVANCE (+ legacy blank kind) do.
 const companyFundedLabourSql = `SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
   WHERE mode=? AND COALESCE(funding_source,'COMPANY')='COMPANY'
@@ -541,8 +590,8 @@ function companyPersonAccountTotals(): Record<string, PersonTotalsRow> {
     const expensesPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM other_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
     const processingCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
     const processingPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM processing_expenses WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
-    const saleProcCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
-    const saleProcPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost),0) as n FROM sale_processing_costs WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
+    const saleProcCompany = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost + COALESCE(transport_cost,0)),0) as n FROM sale_processing_costs WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'").get(person) as any)?.n || 0);
+    const saleProcPocket = Number((sqlite.prepare("SELECT COALESCE(SUM(labour_cost + loading_cost + COALESCE(transport_cost,0)),0) as n FROM sale_processing_costs WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='OWN_POCKET'").get(person) as any)?.n || 0);
     const labourCompany = Number((sqlite.prepare(`
       SELECT COALESCE(SUM(amount),0) as n FROM processing_manual_labour
       WHERE paid_by=? AND COALESCE(funding_source,'COMPANY')='COMPANY'
@@ -2105,6 +2154,11 @@ export async function POST(req: NextRequest) {
         receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         loadingCharges: z.number().nonnegative().optional().default(0),
+        transportCharges: z.number().nonnegative().optional().default(0),
+        /** Plastic: company-paid sale labour (not PET ₹2/kg contract). */
+        sideLabourCharges: z.number().nonnegative().optional().default(0),
+        chargesPaidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
         labourMode: z.enum(["CONTRACT","DAILY_WAGE"]).optional().default("CONTRACT"),
         useAdvance: z.boolean().optional().default(true),
         notes: z.string().trim().optional().default("")
@@ -2134,9 +2188,19 @@ export async function POST(req: NextRequest) {
       const grossAmount = Math.round(lineTotals.reduce((n, x) => n + x, 0) * 100) / 100;
       const totalWeight = Math.round(s.items.reduce((n, x) => n + x.quantityKg, 0) * 1000) / 1000;
       const labourMode = s.mode === "PET" ? s.labourMode : "CONTRACT";
-      const labourCharges = s.mode === "PET" && labourMode === "CONTRACT" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
-      const loadingCharges = s.loadingCharges;
-      const total = Math.round(Math.max(0, grossAmount - labourCharges - loadingCharges) * 100) / 100;
+      const petContractLabour = s.mode === "PET" && labourMode === "CONTRACT" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
+      const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
+      const transportCharges = s.mode === "PLASTIC" ? Math.round((s.transportCharges || 0) * 100) / 100 : 0;
+      const plasticLabourCharges = s.mode === "PLASTIC" ? Math.round((s.sideLabourCharges || 0) * 100) / 100 : 0;
+      // PET: buyer pays gross − contract labour − loading. Plastic: buyer pays full gross;
+      // transport / loading / labour are company side-costs (not deducted).
+      const labourCharges = s.mode === "PET" ? petContractLabour : plasticLabourCharges;
+      const total = s.mode === "PLASTIC"
+        ? grossAmount
+        : Math.round(Math.max(0, grossAmount - petContractLabour - loadingCharges) * 100) / 100;
+      if (s.mode === "PLASTIC" && (transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) && !s.chargesPaidBy) {
+        return NextResponse.json({ error: "Please select Payment done by for transport / loading / labour on this sale" }, { status: 400 });
+      }
       const requiredByMaterial = new Map<string, number>();
       try {
         for (const item of s.items) {
@@ -2161,8 +2225,8 @@ export async function POST(req: NextRequest) {
       const credit = Math.round((total - received) * 100) / 100;
       const primary = s.items[0];
       const primaryVariant = s.mode === "PLASTIC" ? "" : (s.items.length===1?primary.materialVariant:"MIXED");
-      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,gross_amount,labour_charges,loading_charges,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at,labour_mode) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso(),labourMode);
+      const r = sqlite.prepare("INSERT INTO sales (mode,customer_name,phone,location,material_category,material_variant,quantity_kg,rate_per_kg,gross_amount,labour_charges,loading_charges,total_amount,received_amount,credit_amount,sale_date,notes,created_at,updated_at,labour_mode,transport_charges) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
+        .run(s.mode,s.customerName,s.phone,s.location,primary.materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,received,credit,s.saleDate,s.notes,nowIso(),nowIso(),labourMode,transportCharges);
       const saleId = Number(r.lastInsertRowid);
       ensureBuyer(s.mode, s.customerName, s.phone, s.location);
 
@@ -2177,6 +2241,18 @@ export async function POST(req: NextRequest) {
       }
       const advanceApplied = plannedAdvance > 0 ? applyBuyerAdvanceToSale(s.mode, s.customerName, saleId, plannedAdvance, receiptDate) : 0;
       if (cashReceived > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,cashReceived,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
+      if (s.mode === "PLASTIC") {
+        syncSaleSideCosts({
+          mode: s.mode,
+          saleId,
+          transportCharges,
+          loadingCharges,
+          labourCharges: plasticLabourCharges,
+          expenseDate: s.saleDate,
+          paidBy: s.chargesPaidBy || "",
+          fundingSource: s.fundingSource || "COMPANY",
+        });
+      }
       // Contractor earns ₹2/kg only when this sale used contract labour.
       const earn = s.mode === "PET" && labourMode === "CONTRACT" ? creditContractorEarn({
         mode: s.mode,
@@ -2186,7 +2262,7 @@ export async function POST(req: NextRequest) {
         entryDate: s.saleDate,
         notes: `Sale #${saleId} labour earn`,
       }) : null;
-      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,total,received,credit,advanceApplied,labourMode,contractorEarn:earn});
+      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,transportCharges,total,received,credit,advanceApplied,labourMode,contractorEarn:earn});
     }
 
     if (body.action === "updateSale") {
@@ -2204,6 +2280,10 @@ export async function POST(req: NextRequest) {
         })).min(1),
         saleDate: dateSchema,
         loadingCharges: z.number().nonnegative().default(0),
+        transportCharges: z.number().nonnegative().optional().default(0),
+        sideLabourCharges: z.number().nonnegative().optional().default(0),
+        chargesPaidBy: optionalAccountPersonSchema,
+        fundingSource: optionalFundingSourceSchema,
         labourMode: z.enum(["CONTRACT","DAILY_WAGE"]).optional().default("CONTRACT"),
         receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional(),
@@ -2236,9 +2316,17 @@ export async function POST(req: NextRequest) {
       const grossAmount = Math.round(lineTotals.reduce((n,x)=>n+x,0) * 100) / 100;
       const totalWeight = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0) * 1000) / 1000;
       const labourMode = s.mode === "PET" ? s.labourMode : "CONTRACT";
-      const labourCharges = s.mode === "PET" && labourMode === "CONTRACT" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
-      const loadingCharges = s.loadingCharges;
-      const total = Math.round(Math.max(0,grossAmount-labourCharges-loadingCharges) * 100) / 100;
+      const petContractLabour = s.mode === "PET" && labourMode === "CONTRACT" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
+      const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
+      const transportCharges = s.mode === "PLASTIC" ? Math.round((s.transportCharges || 0) * 100) / 100 : 0;
+      const plasticLabourCharges = s.mode === "PLASTIC" ? Math.round((s.sideLabourCharges || 0) * 100) / 100 : 0;
+      const labourCharges = s.mode === "PET" ? petContractLabour : plasticLabourCharges;
+      const total = s.mode === "PLASTIC"
+        ? grossAmount
+        : Math.round(Math.max(0, grossAmount - petContractLabour - loadingCharges) * 100) / 100;
+      if (s.mode === "PLASTIC" && (transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) && !s.chargesPaidBy) {
+        return NextResponse.json({ error: "Please select Payment done by for transport / loading / labour on this sale" }, { status: 400 });
+      }
       if (Number(existing.received_amount) > total + 0.005) {
         return NextResponse.json({error:"Final sale amount cannot be less than payment already received"},{status:400});
       }
@@ -2256,8 +2344,8 @@ export async function POST(req: NextRequest) {
       }
 
         const primaryVariant = s.mode === "PLASTIC" ? "" : (s.items.length===1?s.items[0].materialVariant:"MIXED");
-        sqlite.prepare("UPDATE sales SET customer_name=?,phone=?,location=?,material_category=?,material_variant=?,quantity_kg=?,rate_per_kg=?,gross_amount=?,labour_charges=?,loading_charges=?,total_amount=?,credit_amount=?,sale_date=?,notes=?,updated_at=?,labour_mode=? WHERE id=? AND mode=?")
-          .run(s.customerName,s.phone,s.location,s.items[0].materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,Math.round((total-Number(existing.received_amount))*100)/100,s.saleDate,s.notes,nowIso(),labourMode,s.saleId,s.mode);
+        sqlite.prepare("UPDATE sales SET customer_name=?,phone=?,location=?,material_category=?,material_variant=?,quantity_kg=?,rate_per_kg=?,gross_amount=?,labour_charges=?,loading_charges=?,total_amount=?,credit_amount=?,sale_date=?,notes=?,updated_at=?,labour_mode=?,transport_charges=? WHERE id=? AND mode=?")
+          .run(s.customerName,s.phone,s.location,s.items[0].materialCategory,primaryVariant,totalWeight,0,grossAmount,labourCharges,loadingCharges,total,Math.round((total-Number(existing.received_amount))*100)/100,s.saleDate,s.notes,nowIso(),labourMode,transportCharges,s.saleId,s.mode);
 
         sqlite.prepare("DELETE FROM sale_items WHERE sale_id=?").run(s.saleId);
         sqlite.prepare("DELETE FROM inventory_transactions WHERE sale_id=? AND transaction_type='ADJUSTMENT'").run(s.saleId);
@@ -2277,6 +2365,22 @@ export async function POST(req: NextRequest) {
             .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
 
+      if (s.mode === "PLASTIC") {
+        syncSaleSideCosts({
+          mode: s.mode,
+          saleId: s.saleId,
+          transportCharges,
+          loadingCharges,
+          labourCharges: plasticLabourCharges,
+          expenseDate: s.saleDate,
+          paidBy: s.chargesPaidBy || "",
+          fundingSource: s.fundingSource || "COMPANY",
+        });
+      } else {
+        sqlite.prepare("DELETE FROM other_expenses WHERE sale_id=? AND expense_type IN ('Transport','Loading','Labour')").run(s.saleId);
+        sqlite.prepare("DELETE FROM sale_processing_costs WHERE sale_id=?").run(s.saleId);
+      }
+
       // Keep sale-linked contractor earn in sync with updated kg (PET only).
       sqlite.prepare("DELETE FROM processing_contractor_ledger WHERE sale_id=? AND entry_type='EARN_SALE'").run(s.saleId);
       const earn = s.mode === "PET" && labourMode === "CONTRACT" ? creditContractorEarn({
@@ -2288,7 +2392,7 @@ export async function POST(req: NextRequest) {
         notes: `Sale #${s.saleId} labour earn`,
       }) : null;
 
-      return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100,labourMode,contractorEarn:earn});
+      return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,transportCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100,labourMode,contractorEarn:earn});
     }
 
     if (body.action === "receiveSalePayment") {
