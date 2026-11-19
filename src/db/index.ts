@@ -10,18 +10,13 @@ import {
   resolveDbFile,
   tryRestoreDbFromBackups,
 } from "@/lib/data-paths";
-import { ensureDemoBusinessData } from "@/lib/demo-data";
-import { currentDbScope } from "@/lib/db-context";
 import { purgeDemoPollutionFromLiveDb } from "@/lib/purge-demo-pollution";
 
 // Production / Railway data MUST live on a persistent Volume (default /app/data).
 const dataDir = resolveDataDir();
 let dbPath = resolveDbFile(dataDir);
 
-const globalForDb = globalThis as unknown as {
-  __plasticDb?: DatabaseSync;
-  __plasticDemoDb?: DatabaseSync;
-};
+const globalForDb = globalThis as unknown as { __plasticDb?: DatabaseSync };
 
 /**
  * Next.js spawns many workers during `next build` that all import API/page modules.
@@ -54,13 +49,8 @@ function resolveLiveDbPath() {
   return dbPath;
 }
 
-function resolveDemoDbFile() {
-  return path.join(dataDir, "demo-plastic-rates.db");
-}
-
-function createDb(kind: "live" | "demo" = "live") {
+function createDb() {
   const memory = shouldUseMemoryDb();
-  let filePath = dbPath;
 
   if (!memory) {
     // HARD STOP on Railway when /app/data is only the image folder (no Volume).
@@ -73,22 +63,17 @@ function createDb(kind: "live" | "demo" = "live") {
     const backupDir = resolveBackupDir(dataDir);
     if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
 
-    if (kind === "demo") {
-      filePath = resolveDemoDbFile();
-    } else {
-      dbPath = resolveLiveDbPath();
-      filePath = dbPath;
-      tryRestoreDbFromBackups(dbPath, backupDir);
+    dbPath = resolveLiveDbPath();
+    tryRestoreDbFromBackups(dbPath, backupDir);
 
-      if (!fs.existsSync(dbPath) && isProductionRuntime()) {
-        console.warn(
-          `[navrit] Volume OK but no database yet at ${dbPath}. Create via use, or Admin → Backup → Import migration zip.`
-        );
-      }
+    if (!fs.existsSync(dbPath) && isProductionRuntime()) {
+      console.warn(
+        `[navrit] Volume OK but no database yet at ${dbPath}. Create via use, or Admin → Backup → Import migration zip.`
+      );
     }
   }
 
-  const sqlite = new DatabaseSync(memory ? ":memory:" : filePath);
+  const sqlite = new DatabaseSync(memory ? ":memory:" : dbPath);
   sqlite.exec("PRAGMA busy_timeout = 10000;");
   if (!memory) {
     try {
@@ -719,23 +704,13 @@ function createDb(kind: "live" | "demo" = "live") {
       WHERE sale_id IS NULL AND transaction_type = 'ADJUSTMENT' AND notes LIKE 'SALE #%'`);
   } catch { /* legacy rows may not exist */ }
   seedSiteContent(sqlite);
-
-  if (kind === "live") {
-    // Undo first-version demo seed that wrote sample rows into production.
-    try {
-      const purged = purgeDemoPollutionFromLiveDb(sqlite);
-      if (purged.purged) console.info(`[navrit] Cleaned demo rows from live DB (${purged.detail})`);
-    } catch (error) {
-      console.warn("[navrit] Live demo-pollution cleanup skipped", error);
-    }
-  } else {
-    // Demo DB only — always ensure sample ledgers exist.
-    try {
-      const result = ensureDemoBusinessData(sqlite);
-      if (result.seeded) console.info("[navrit] Demo business sample data loaded into demo DB");
-    } catch (error) {
-      console.warn("[navrit] Demo seed skipped", error);
-    }
+  // One-time cleanup of Demo* sample rows that leaked into the live ledger.
+  // Real vendors/workers/purchases are not matched by these patterns.
+  try {
+    const purged = purgeDemoPollutionFromLiveDb(sqlite);
+    if (purged.purged) console.info(`[navrit] Removed leaked demo rows from live DB (${purged.detail})`);
+  } catch (error) {
+    console.warn("[navrit] Demo-row cleanup skipped", error);
   }
   return sqlite;
 }
@@ -768,40 +743,18 @@ function seedSiteContent(db: DatabaseSync) {
   }
 }
 
-function getLiveDb() {
+function getDb() {
   if (!globalForDb.__plasticDb) {
-    globalForDb.__plasticDb = createDb("live");
+    globalForDb.__plasticDb = createDb();
   }
   return globalForDb.__plasticDb;
 }
 
-function getDemoDb() {
-  if (!globalForDb.__plasticDemoDb) {
-    globalForDb.__plasticDemoDb = createDb("demo");
-  }
-  return globalForDb.__plasticDemoDb;
-}
-
-function getDb() {
-  return currentDbScope() === "demo" ? getDemoDb() : getLiveDb();
-}
-
-/** Explicit demo DB handle (login seeding). Does not depend on request scope. */
-export function openDemoSqlite() {
-  return getDemoDb();
-}
-
 export function closeDb() {
-  const live = globalForDb.__plasticDb;
-  if (live) {
-    live.close();
-    delete globalForDb.__plasticDb;
-  }
-  const demo = globalForDb.__plasticDemoDb;
-  if (demo) {
-    demo.close();
-    delete globalForDb.__plasticDemoDb;
-  }
+  const db = globalForDb.__plasticDb;
+  if (!db) return;
+  db.close();
+  delete globalForDb.__plasticDb;
 }
 
 export const sqlite = new Proxy({} as DatabaseSync, {

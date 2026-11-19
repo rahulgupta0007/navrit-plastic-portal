@@ -26,8 +26,6 @@ Open [http://localhost:3000](http://localhost:3000)
 **Admin:** [http://localhost:3000/admin](http://localhost:3000/admin)  
 Default login (from `.env.local`): `admin` / `admin123`
 
-**Demo user (built-in):** `demo` / `demo123` — view-only showcase login on a **separate** SQLite file (`demo-plastic-rates.db`), never your live company ledger. Override with `DEMO_USERNAME` / `DEMO_PASSWORD`.
-
 **View-only user (optional):** set `READONLY_USERNAME` + `READONLY_PASSWORD` in `.env.local` / Railway Variables. That login can browse all ledgers and reports but cannot save, edit, delete, or use Backup.
 
 ## Features

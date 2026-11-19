@@ -97,32 +97,9 @@ export default function AdminLoginPage() {
             <h2 className="font-display text-3xl text-[#042821] sm:text-4xl">{dict.login}</h2>
             <p className="mt-2 text-sm text-[#1a2e2a]">{dict.loginSubtitle}</p>
             <p className="mt-2 text-xs text-[#042821]/55">
-              Admin = full access. View-only / demo login can browse data but cannot change anything.
+              Admin = full access. View-only login (if configured) can browse data but cannot change
+              anything.
             </p>
-
-            <div className="mt-6 rounded-2xl border border-[#0b5c4d]/20 bg-white px-4 py-3">
-              <p className="text-xs font-semibold uppercase tracking-wider text-[#0b5c4d]">Demo access</p>
-              <p className="mt-1 text-sm text-[#042821]">
-                Username <code className="rounded bg-[#f3f8f6] px-1.5 py-0.5 font-semibold">demo</code>
-                {" · "}
-                Password <code className="rounded bg-[#f3f8f6] px-1.5 py-0.5 font-semibold">demo123</code>
-              </p>
-              <p className="mt-1 text-[11px] text-[#042821]/55">
-                Uses a separate sample database (not your live company data) with purchases, sales,
-                expenses, stock and labour.
-              </p>
-              <button
-                type="button"
-                className="mt-3 w-full rounded-xl border border-[#042821]/12 bg-[#f3f8f6] px-3 py-2 text-sm font-semibold text-[#042821] transition hover:border-[#0b5c4d]/40 hover:bg-white"
-                onClick={() => {
-                  setUsername("demo");
-                  setPassword("demo123");
-                  setError("");
-                }}
-              >
-                Use demo account
-              </button>
-            </div>
 
             <label className="mt-8 block text-sm font-medium text-[#042821]">
               {dict.username}
@@ -131,7 +108,7 @@ export default function AdminLoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 autoComplete="username"
-                placeholder="demo"
+                placeholder="admin"
                 required
               />
             </label>
