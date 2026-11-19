@@ -188,8 +188,8 @@ function syncPurchaseSideCosts(opts: {
 }
 
 /**
- * Plastic sale side costs we pay (transport / loading / labour) — separate from buyer sale total.
- * Recorded on sale_processing_costs + other_expenses for cash book and analysis.
+ * Sale side costs we pay (transport / loading / labour) — separate from buyer sale total.
+ * Used for Plastic and PET loading. Hits other_expenses for cash book + partner attribution.
  */
 function syncSaleSideCosts(opts: {
   mode: string;
@@ -2237,11 +2237,11 @@ export async function POST(req: NextRequest) {
         paymentMode: z.string().trim().min(1).optional().default("Cash"),
         loadingCharges: z.number().nonnegative().optional().default(0),
         transportCharges: z.number().nonnegative().optional().default(0),
-        /** Plastic: company-paid sale labour (not PET ₹2/kg contract). */
+        /** Plastic: company-paid sale labour (PET uses daily wage in Labour Management). */
         sideLabourCharges: z.number().nonnegative().optional().default(0),
         chargesPaidBy: optionalAccountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
-        labourMode: z.enum(["CONTRACT","DAILY_WAGE"]).optional().default("CONTRACT"),
+        labourMode: z.enum(["CONTRACT","DAILY_WAGE"]).optional().default("DAILY_WAGE"),
         useAdvance: z.boolean().optional().default(true),
         notes: z.string().trim().optional().default("")
       }).parse(body);
@@ -2269,19 +2269,19 @@ export async function POST(req: NextRequest) {
       const lineTotals = s.items.map(item => Math.round(item.quantityKg * item.ratePerKg * 100) / 100);
       const grossAmount = Math.round(lineTotals.reduce((n, x) => n + x, 0) * 100) / 100;
       const totalWeight = Math.round(s.items.reduce((n, x) => n + x.quantityKg, 0) * 1000) / 1000;
-      const labourMode = s.mode === "PET" ? s.labourMode : "CONTRACT";
-      const petContractLabour = s.mode === "PET" && labourMode === "CONTRACT" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
+      // PET: daily wage only (no contract ₹2/kg on sales). Buyer always pays full gross.
+      const labourMode = "DAILY_WAGE";
       const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
       const transportCharges = s.mode === "PLASTIC" ? Math.round((s.transportCharges || 0) * 100) / 100 : 0;
       const plasticLabourCharges = s.mode === "PLASTIC" ? Math.round((s.sideLabourCharges || 0) * 100) / 100 : 0;
-      // PET: buyer pays gross − contract labour − loading. Plastic: buyer pays full gross;
-      // transport / loading / labour are company side-costs (not deducted).
-      const labourCharges = s.mode === "PET" ? petContractLabour : plasticLabourCharges;
-      const total = s.mode === "PLASTIC"
-        ? grossAmount
-        : Math.round(Math.max(0, grossAmount - petContractLabour - loadingCharges) * 100) / 100;
-      if (s.mode === "PLASTIC" && (transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) && !s.chargesPaidBy) {
-        return NextResponse.json({ error: "Please select Payment done by for transport / loading / labour on this sale" }, { status: 400 });
+      const labourCharges = plasticLabourCharges;
+      const total = grossAmount;
+      if ((transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) && !s.chargesPaidBy) {
+        return NextResponse.json({
+          error: s.mode === "PET"
+            ? "Please select Payment done by for loading on this sale"
+            : "Please select Payment done by for transport / loading / labour on this sale",
+        }, { status: 400 });
       }
       const requiredByMaterial = new Map<string, number>();
       try {
@@ -2323,7 +2323,7 @@ export async function POST(req: NextRequest) {
       }
       const advanceApplied = plannedAdvance > 0 ? applyBuyerAdvanceToSale(s.mode, s.customerName, saleId, plannedAdvance, receiptDate) : 0;
       if (cashReceived > 0) sqlite.prepare("INSERT INTO sale_payments (mode,sale_id,amount,payment_date,payment_mode,received_by,notes,created_at) VALUES (?,?,?,?,?,?,?,?)").run(s.mode,saleId,cashReceived,receiptDate,s.paymentMode,s.receivedBy ?? "",s.notes,nowIso());
-      if (s.mode === "PLASTIC") {
+      if (transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) {
         syncSaleSideCosts({
           mode: s.mode,
           saleId,
@@ -2335,16 +2335,7 @@ export async function POST(req: NextRequest) {
           fundingSource: s.fundingSource || "COMPANY",
         });
       }
-      // Contractor earns ₹2/kg only when this sale used contract labour.
-      const earn = s.mode === "PET" && labourMode === "CONTRACT" ? creditContractorEarn({
-        mode: s.mode,
-        entryType: "EARN_SALE",
-        kg: totalWeight,
-        saleId,
-        entryDate: s.saleDate,
-        notes: `Sale #${saleId} labour earn`,
-      }) : null;
-      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,transportCharges,total,received,credit,advanceApplied,labourMode,contractorEarn:earn});
+      return json({ok:true,id:saleId,grossAmount,labourCharges,loadingCharges,transportCharges,total,received,credit,advanceApplied,labourMode,contractorEarn:null});
     }
 
     if (body.action === "updateSale") {
@@ -2366,7 +2357,7 @@ export async function POST(req: NextRequest) {
         sideLabourCharges: z.number().nonnegative().optional().default(0),
         chargesPaidBy: optionalAccountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
-        labourMode: z.enum(["CONTRACT","DAILY_WAGE"]).optional().default("CONTRACT"),
+        labourMode: z.enum(["CONTRACT","DAILY_WAGE"]).optional().default("DAILY_WAGE"),
         receivedBy: optionalAccountPersonSchema,
         paymentMode: z.string().trim().min(1).optional(),
         notes: z.string().trim().optional().default("")
@@ -2397,17 +2388,18 @@ export async function POST(req: NextRequest) {
       const lineTotals = s.items.map(item => Math.round(item.quantityKg * item.ratePerKg * 100) / 100);
       const grossAmount = Math.round(lineTotals.reduce((n,x)=>n+x,0) * 100) / 100;
       const totalWeight = Math.round(s.items.reduce((n,x)=>n+x.quantityKg,0) * 1000) / 1000;
-      const labourMode = s.mode === "PET" ? s.labourMode : "CONTRACT";
-      const petContractLabour = s.mode === "PET" && labourMode === "CONTRACT" ? Math.round(totalWeight * 2 * 100) / 100 : 0;
+      const labourMode = "DAILY_WAGE";
       const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
       const transportCharges = s.mode === "PLASTIC" ? Math.round((s.transportCharges || 0) * 100) / 100 : 0;
       const plasticLabourCharges = s.mode === "PLASTIC" ? Math.round((s.sideLabourCharges || 0) * 100) / 100 : 0;
-      const labourCharges = s.mode === "PET" ? petContractLabour : plasticLabourCharges;
-      const total = s.mode === "PLASTIC"
-        ? grossAmount
-        : Math.round(Math.max(0, grossAmount - petContractLabour - loadingCharges) * 100) / 100;
-      if (s.mode === "PLASTIC" && (transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) && !s.chargesPaidBy) {
-        return NextResponse.json({ error: "Please select Payment done by for transport / loading / labour on this sale" }, { status: 400 });
+      const labourCharges = plasticLabourCharges;
+      const total = grossAmount;
+      if ((transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) && !s.chargesPaidBy) {
+        return NextResponse.json({
+          error: s.mode === "PET"
+            ? "Please select Payment done by for loading on this sale"
+            : "Please select Payment done by for transport / loading / labour on this sale",
+        }, { status: 400 });
       }
       if (Number(existing.received_amount) > total + 0.005) {
         return NextResponse.json({error:"Final sale amount cannot be less than payment already received"},{status:400});
@@ -2447,7 +2439,7 @@ export async function POST(req: NextRequest) {
             .run(s.receivedBy ?? null,s.paymentMode ?? null,s.saleId);
         }
 
-      if (s.mode === "PLASTIC") {
+      if (transportCharges > 0.005 || loadingCharges > 0.005 || plasticLabourCharges > 0.005) {
         syncSaleSideCosts({
           mode: s.mode,
           saleId: s.saleId,
@@ -2460,21 +2452,13 @@ export async function POST(req: NextRequest) {
         });
       } else {
         sqlite.prepare("DELETE FROM other_expenses WHERE sale_id=? AND expense_type IN ('Transport','Loading','Labour')").run(s.saleId);
-        sqlite.prepare("DELETE FROM sale_processing_costs WHERE sale_id=?").run(s.saleId);
+        try { sqlite.prepare("DELETE FROM sale_processing_costs WHERE sale_id=?").run(s.saleId); } catch { /* ignore */ }
       }
 
-      // Keep sale-linked contractor earn in sync with updated kg (PET only).
+      // Contract ₹2/kg earn on sales removed — clear any legacy sale-linked contractor earn rows.
       sqlite.prepare("DELETE FROM processing_contractor_ledger WHERE sale_id=? AND entry_type='EARN_SALE'").run(s.saleId);
-      const earn = s.mode === "PET" && labourMode === "CONTRACT" ? creditContractorEarn({
-        mode: s.mode,
-        entryType: "EARN_SALE",
-        kg: totalWeight,
-        saleId: s.saleId,
-        entryDate: s.saleDate,
-        notes: `Sale #${s.saleId} labour earn`,
-      }) : null;
 
-      return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,transportCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100,labourMode,contractorEarn:earn});
+      return json({ok:true,id:s.saleId,grossAmount,labourCharges,loadingCharges,transportCharges,total,received:Number(existing.received_amount),credit:Math.round((total-Number(existing.received_amount))*100)/100,labourMode,contractorEarn:null});
     }
 
     if (body.action === "receiveSalePayment") {
