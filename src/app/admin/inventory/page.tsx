@@ -50,7 +50,7 @@ export default function InventoryPage() {
   const [customExpenseTypes,setCustomExpenseTypes] = useState<string[]>([]);
   const [showNewExpenseType,setShowNewExpenseType] = useState(false);
   const [newExpenseTypeName,setNewExpenseTypeName] = useState("");
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT" as "CONTRACT"|"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY" as FundingSource,labourMode:"DAILY_WAGE" as "CONTRACT"|"DAILY_WAGE",withGst:false,gstPercent:"18",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
@@ -58,6 +58,7 @@ export default function InventoryPage() {
   const [message,setMessage] = useState("");
   const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Mixed", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), paymentDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", loadingCharges:"" };
   const [purchase,setPurchase] = useState(emptyPurchase);
+  const [purchaseItems,setPurchaseItems] = useState([{materialName:"", materialVariant:"Mixed", quantityKg:"", ratePerKg:""}]);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
   const [paymentEdit,setPaymentEdit] = useState<{purchaseId:number; paymentDate:string; paidBy:string} | null>(null);
   const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
@@ -83,6 +84,14 @@ export default function InventoryPage() {
     if (mode === "PLASTIC") {
       const first = (data?.plasticMaterialTypes || []).find((t: any) => t.active)?.name || "";
       setPurchase((p) => ({ ...p, materialName: first, materialVariant: "" }));
+      setPurchaseItems((items) => items.map((it) => {
+        const isPlastic = (data?.plasticMaterialTypes || []).some((t: any) => t.active && t.name === it.materialName);
+        return {
+          ...it,
+          materialName: isPlastic ? it.materialName : first,
+          materialVariant: "",
+        };
+      }));
       setSaleItems((items) => items.map((it) => ({
         ...it,
         materialCategory: it.materialCategory && !(it.materialCategory === "Natural Bottles" || it.materialCategory === "Red Bottles")
@@ -107,6 +116,16 @@ export default function InventoryPage() {
         ...p,
         materialName: p.materialName === "Natural Bottles" || p.materialName === "Red Bottles" ? p.materialName : "Natural Bottles",
         materialVariant: p.materialName === "Red Bottles" ? "Red" : (p.materialVariant || "Mixed"),
+      }));
+      setPurchaseItems((items) => items.map((it) => {
+        const ok = it.materialName === "Natural Bottles" || it.materialName === "Red Bottles";
+        if (ok) {
+          return {
+            ...it,
+            materialVariant: it.materialName === "Red Bottles" ? "Red" : "Mixed",
+          };
+        }
+        return { ...it, materialName: "Natural Bottles", materialVariant: "Mixed" };
       }));
       setSaleItems((items) => items.map((it) => {
         const ok = it.materialCategory === "Natural Bottles" || it.materialCategory === "Red Bottles";
@@ -140,10 +159,17 @@ export default function InventoryPage() {
   const openBorrowings=filteredBorrowings.filter((x:Borrowing)=>x.outstanding_amount>0);
   const currentKg=filteredInventory.reduce((n:any,x:any)=>n+Number(x.quantityKg||0),0);
   const saleGrossAmount=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0)*(Number(x.ratePerKg)||0),0);
-  const saleTotalWeight=saleItems.reduce((n:number,x:any)=>n+(Number(x.quantityKg)||0),0);
-  const saleLabourCharges=mode==="PET"&&sale.labourMode==="CONTRACT"?saleTotalWeight*2:0;
   const saleLoadingCharges=Number(sale.loadingCharges||0);
-  const saleFinalAmount=Math.max(0,saleGrossAmount-saleLabourCharges-saleLoadingCharges);
+  const saleTransportCharges=mode==="PLASTIC"?Number(sale.transportCharges||0):0;
+  const saleSideLabourCharges=mode==="PLASTIC"?Number(sale.sideLabourCharges||0):0;
+  const saleGstPercent=sale.withGst?Math.max(0,Number(sale.gstPercent||0)):0;
+  const saleGstAmount=saleGstPercent>0?Math.round((saleGrossAmount*saleGstPercent/100)*100)/100:0;
+  // Buyer pays Gross + GST. Loading (PET/Plastic) + Plastic transport/labour are
+  // company side costs paid by a person — not deducted from sale / final amount.
+  // PET labour is daily wage only (Labour Management) — no contract ₹2/kg on sales.
+  const saleFinalAmount=Math.round((saleGrossAmount+saleGstAmount)*100)/100;
+  const saleSideCostsTotal=saleLoadingCharges+saleTransportCharges+saleSideLabourCharges;
+  const saleNeedsPayBy=saleSideCostsTotal>0;
   const modeBuyers=useMemo(()=>{
     const registered=((data?.buyers||[]) as any[]).filter((b:any)=>b.mode===mode&&b.name);
     if (registered.length) return registered;
@@ -238,13 +264,35 @@ export default function InventoryPage() {
     return { materialCategory: "Natural Bottles", materialVariant: "Green", quantityKg: "", ratePerKg: "" };
   }
 
+  function defaultPurchaseItem() {
+    if (mode === "PLASTIC") {
+      const first = plasticTypes[0]?.name || "";
+      return { materialName: first, materialVariant: "", quantityKg: "", ratePerKg: "" };
+    }
+    return { materialName: "Natural Bottles", materialVariant: "Mixed", quantityKg: "", ratePerKg: "" };
+  }
+
+  function resetPurchaseForm() {
+    setEditingPurchase(null);
+    setPurchase({ ...emptyPurchase });
+    setPurchaseItems([defaultPurchaseItem()]);
+  }
+
   function validatePurchaseForm() {
     if (!purchase.supplierId) return "Please select a Vendor";
-    if (!purchase.materialName) return mode==="PLASTIC" ? "Please select a Plastic material type" : "Please select Material (Natural or Red)";
-    const qty = Number(purchase.quantityKg);
-    if (!(qty > 0)) return "Please enter Quantity (kg) greater than 0";
-    const rate = Number(purchase.ratePerKg);
-    if (purchase.ratePerKg === "" || Number.isNaN(rate) || rate < 0) return "Please enter Rate / kg";
+    if (!purchaseItems.length) return "Add at least one material line";
+    for (let i = 0; i < purchaseItems.length; i++) {
+      const item = purchaseItems[i];
+      if (!item.materialName) {
+        return mode === "PLASTIC"
+          ? `Line ${i + 1}: select a Plastic material type`
+          : `Line ${i + 1}: select Material (Natural or Red)`;
+      }
+      const qty = Number(item.quantityKg);
+      if (!(qty > 0)) return `Line ${i + 1}: enter Quantity (kg) greater than 0`;
+      const rate = Number(item.ratePerKg);
+      if (item.ratePerKg === "" || Number.isNaN(rate) || rate < 0) return `Line ${i + 1}: enter Rate / kg`;
+    }
     const paid = purchase.paidAmount === "" ? 0 : Number(purchase.paidAmount);
     if (purchase.paidAmount !== "" && (Number.isNaN(paid) || paid < 0)) return "Paid to vendor must be a valid amount (0 or more)";
     const transport = purchase.transportCharges === "" ? 0 : Number(purchase.transportCharges);
@@ -257,15 +305,16 @@ export default function InventoryPage() {
     return "";
   }
 
-  const materialTotal = (Number(purchase.quantityKg) || 0) * (Number(purchase.ratePerKg) || 0);
+  const materialTotal = purchaseItems.reduce((n, x) => n + (Number(x.quantityKg) || 0) * (Number(x.ratePerKg) || 0), 0);
+  const purchaseTotalKg = purchaseItems.reduce((n, x) => n + (Number(x.quantityKg) || 0), 0);
   const transportAmt = Number(purchase.transportCharges) || 0;
   const loadingAmt = Number(purchase.loadingCharges) || 0;
   const landedTotal = materialTotal + transportAmt + loadingAmt;
-  const finalRate = (Number(purchase.quantityKg) || 0) > 0 ? landedTotal / Number(purchase.quantityKg) : 0;
+  const finalRate = purchaseTotalKg > 0 ? landedTotal / purchaseTotalKg : 0;
 
   function resetSaleForm() {
     setEditingSale(null);
-    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",labourMode:"CONTRACT",saleDate:new Date().toISOString().slice(0,10),notes:""});
+    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY",labourMode:"DAILY_WAGE",withGst:false,gstPercent:"18",saleDate:new Date().toISOString().slice(0,10),notes:""});
     setSaleItems([defaultSaleItem()]);
   }
 
@@ -304,13 +353,21 @@ export default function InventoryPage() {
         materialVariant: items[idx]?.materialVariant ?? "Green",
       })));
     }
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,saleDate:sale.saleDate,useAdvance,notes:sale.notes});
+    if ((Number(sale.loadingCharges||0)>0 || Number(sale.transportCharges||0)>0 || Number(sale.sideLabourCharges||0)>0) && !sale.chargesPaidBy) {
+      setMessage("Please select Payment done by for loading" + (mode==="PLASTIC" ? " / transport / labour" : ""));
+      return;
+    }
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),gstPercent:saleGstPercent,chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:"DAILY_WAGE",saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
   async function editSale() {
     if(editingSale===null) return;
-    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),labourMode:sale.labourMode,receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    if ((Number(sale.loadingCharges||0)>0 || Number(sale.transportCharges||0)>0 || Number(sale.sideLabourCharges||0)>0) && !sale.chargesPaidBy) {
+      setMessage("Please select Payment done by for loading" + (mode==="PLASTIC" ? " / transport / labour" : ""));
+      return;
+    }
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),gstPercent:saleGstPercent,chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:"DAILY_WAGE",receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -318,6 +375,7 @@ export default function InventoryPage() {
     const items=(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id);
     const payments=(data.salePayments||[]).filter((x:any)=>x.sale_id===s.id);
     const latestPayment=payments.find((x:any)=>x.payment_mode!=="Advance")||payments[0];
+    const gstPct=Number(s.gst_percent||0);
     setEditingSale(s.id);
     setSale({
       customerName:s.customer_name||"",
@@ -327,7 +385,13 @@ export default function InventoryPage() {
       receivedBy:latestPayment?.received_by||"",
       paymentMode:latestPayment?.payment_mode||"Cash",
       loadingCharges:String(s.loading_charges??""),
-      labourMode:(s.labour_mode==="DAILY_WAGE" || (Number(s.labour_charges||0)<=0 && mode==="PET")) ? "DAILY_WAGE" : "CONTRACT",
+      transportCharges:String(s.transport_charges??""),
+      sideLabourCharges: mode==="PLASTIC" ? String(s.labour_charges??"") : "",
+      chargesPaidBy:"",
+      chargesFunding:"COMPANY" as FundingSource,
+      labourMode:"DAILY_WAGE",
+      withGst:gstPct>0.004,
+      gstPercent:gstPct>0.004?String(gstPct):"18",
       saleDate:s.sale_date,
       notes:s.notes||""
     });
@@ -437,17 +501,28 @@ export default function InventoryPage() {
     return { materialName, materialVariant: materialVariant || "Mixed" };
   }
 
+  function purchaseItemsPayload() {
+    return purchaseItems.map((x) => ({
+      materialName: String(x.materialName || "").trim(),
+      materialVariant: mode === "PLASTIC"
+        ? ""
+        : (x.materialName === "Red Bottles" ? "Red" : "Mixed"),
+      quantityKg: Number(x.quantityKg),
+      ratePerKg: Number(x.ratePerKg),
+    }));
+  }
+
   async function addPurchase() {
     const clientError = validatePurchaseForm();
     if (clientError) { setMessage(clientError); return; }
-    const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
+    const items = purchaseItemsPayload();
     const cashPaid=purchase.paidAmount===""?undefined:Number(purchase.paidAmount);
     const ok=await post("addPurchase",{
-      mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
+      mode,
+      items,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined,
-      purchaseType:purchase.purchaseType, quantityKg:Number(purchase.quantityKg),
-      ratePerKg:Number(purchase.ratePerKg), paidAmount:cashPaid, paidBy:purchase.paidBy||undefined, fundingSource:purchase.fundingSource,
+      purchaseType:purchase.purchaseType,
+      paidAmount:cashPaid, paidBy:purchase.paidBy||undefined, fundingSource:purchase.fundingSource,
       borrowingId:purchase.borrowingId?Number(purchase.borrowingId):undefined,
       lenderId:purchase.lenderId?Number(purchase.lenderId):undefined,
       purchaseDate:purchase.purchaseDate,
@@ -457,20 +532,25 @@ export default function InventoryPage() {
       loadingCharges: purchase.loadingCharges==="" ? 0 : Number(purchase.loadingCharges),
       sendEmail,
     });
-    if(ok)setPurchase({...emptyPurchase});
+    if(ok) resetPurchaseForm();
   }
 
   async function editPurchase() {
     if (editingPurchase===null) return;
     const clientError = validatePurchaseForm();
     if (clientError) { setMessage(clientError); return; }
-    const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
+    if (purchaseItems.length !== 1) {
+      setMessage("While editing, keep one material line (or cancel and add a new multi-type purchase)");
+      return;
+    }
+    const line = purchaseItemsPayload()[0];
     const cashPaid=purchase.paidAmount===""?undefined:Number(purchase.paidAmount);
     const ok=await post("updatePurchase",{
-      purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
+      purchaseId:editingPurchase, mode,
+      materialName: line.materialName,
+      materialVariant: line.materialVariant,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
-      quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg),
+      quantityKg:line.quantityKg, ratePerKg:line.ratePerKg,
       paidAmount:cashPaid,
       paidBy:purchase.paidBy||undefined,
       fundingSource:purchase.fundingSource,
@@ -481,7 +561,7 @@ export default function InventoryPage() {
       loadingCharges: purchase.loadingCharges==="" ? 0 : Number(purchase.loadingCharges),
       sendEmail,
     });
-    if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
+    if(ok) resetPurchaseForm();
   }
 
   function startEditPurchase(p:Purchase) {
@@ -507,6 +587,12 @@ export default function InventoryPage() {
       transportCharges: String(p.transport_charges || ""),
       loadingCharges: String(p.labour_charges || ""),
     });
+    setPurchaseItems([{
+      materialName: parsed.materialName,
+      materialVariant: parsed.materialVariant || "Mixed",
+      quantityKg: String(p.quantity_kg),
+      ratePerKg: String(p.rate_per_kg),
+    }]);
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -758,46 +844,68 @@ export default function InventoryPage() {
               ...(data.suppliers||[]).map((s:Supplier)=>({ value: String(s.id), label: s.name })),
             ]}
           />
-          {mode==="PLASTIC" ? (
-            <AdminSelect
-              label="Plastic material type"
-              required
-              placeholder="Select type"
-              value={purchase.materialName}
-              onChange={(materialName)=>setPurchase({...purchase,materialName,materialVariant:""})}
-              options={[
-                { value: "", label: "Select type" },
-                ...plasticTypes.map((t:any)=>({ value: t.name, label: t.name })),
-              ]}
-            />
-          ) : (
-            <AdminSelect
-              label="Material"
-              required
-              placeholder="Select material"
-              value={purchase.materialName}
-              onChange={(materialName)=>{
-                setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
-              }}
-              options={[
-                { value: "", label: "Select material" },
-                { value: "Natural Bottles", label: "Natural (mixed)" },
-                { value: "Red Bottles", label: "Red" },
-              ]}
-            />
-          )}
           <label className="ad-field">
             <span className="ad-field-label">Purchase date *</span>
             <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           </label>
-          <label className="ad-field">
-            <span className="ad-field-label">Quantity (kg) *</span>
-            <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 100" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
-          </label>
-          <label className="ad-field">
-            <span className="ad-field-label">Rate / kg *</span>
-            <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 49" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
-          </label>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <p className="text-xs font-medium ad-muted">Materials — add multiple Plastic / PET types in one purchase (same as sale)</p>
+          {purchaseItems.map((item, i) => (
+            <div key={i} className="grid gap-2 md:grid-cols-6 items-end">
+              {mode==="PLASTIC" ? (
+                <AdminSelect
+                  label={i === 0 ? "Plastic material type *" : undefined}
+                  required={i === 0}
+                  placeholder="Select type"
+                  value={item.materialName}
+                  onChange={(materialName)=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,materialName,materialVariant:""}:x))}
+                  options={[
+                    { value: "", label: "Select type" },
+                    ...plasticTypes.map((t:any)=>({ value: t.name, label: t.name })),
+                  ]}
+                />
+              ) : (
+                <AdminSelect
+                  label={i === 0 ? "Material *" : undefined}
+                  required={i === 0}
+                  placeholder="Select material"
+                  value={item.materialName}
+                  onChange={(materialName)=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"}:x))}
+                  options={[
+                    { value: "", label: "Select material" },
+                    { value: "Natural Bottles", label: "Natural (mixed)" },
+                    { value: "Red Bottles", label: "Red" },
+                  ]}
+                />
+              )}
+              <label className="ad-field">
+                {i === 0 && <span className="ad-field-label">Quantity (kg) *</span>}
+                <input className="ad-input" type="number" min="0" step="any" placeholder="Qty kg" value={item.quantityKg} onChange={e=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,quantityKg:e.target.value}:x))}/>
+              </label>
+              <label className="ad-field">
+                {i === 0 && <span className="ad-field-label">Rate / kg *</span>}
+                <input className="ad-input" type="number" min="0" step="any" placeholder="Rate / kg" value={item.ratePerKg} onChange={e=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,ratePerKg:e.target.value}:x))}/>
+              </label>
+              <div className="ad-field">
+                {i === 0 && <span className="ad-field-label">Line total</span>}
+                <div className="ad-input flex items-center text-sm font-semibold">₹{((Number(item.quantityKg)||0)*(Number(item.ratePerKg)||0)).toFixed(2)}</div>
+              </div>
+              {purchaseItems.length > 1 && !editingPurchase ? (
+                <button type="button" className="ad-btn ad-btn-ghost" onClick={()=>setPurchaseItems(purchaseItems.filter((_,j)=>j!==i))}>Remove</button>
+              ) : <span />}
+            </div>
+          ))}
+          {!editingPurchase && (
+            <button type="button" className="ad-btn ad-btn-ghost" onClick={()=>setPurchaseItems([...purchaseItems, defaultPurchaseItem()])}>+ Add Material</button>
+          )}
+          {editingPurchase && (
+            <p className="text-xs ad-muted">Editing one purchase row. To save several types together, cancel and use + Add Material on a new purchase.</p>
+          )}
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
           <div className="ad-field">
             <span className="ad-field-label">Vendor material total</span>
             <div className="ad-input flex items-center text-sm font-semibold">₹{materialTotal.toFixed(2)}</div>
@@ -860,10 +968,10 @@ export default function InventoryPage() {
           </label>
           <div className="flex flex-wrap items-end gap-2 md:col-span-2">
             <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>
-            {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
+            {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={resetPurchaseForm}>Cancel</button>}
           </div>
         </div>
-        <p className="mt-3 text-xs ad-muted">Vendor gets <b>material cost only</b>. Transport (driver) and loading (outside labour) are separate expenses — not added to vendor bill. Final rate / kg = (material + transport + loading) ÷ kg. PDF emailed to your Gmail.</p>
+        <p className="mt-3 text-xs ad-muted">Use <b>+ Add Material</b> for several types in one go (shared vendor, date, transport, loading, payment). Each type becomes its own stock line. Vendor gets <b>material cost only</b>. Transport / loading are separate expenses. Final rate / kg = (all material + transport + loading) ÷ total kg.</p>
       </div>
 
       {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
@@ -1005,20 +1113,74 @@ export default function InventoryPage() {
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <span className="ad-input flex items-center font-semibold">Gross Sale: ₹{saleGrossAmount.toFixed(2)}</span>
           {mode==="PET" && (
-            <select className="ad-input" value={sale.labourMode} onChange={e=>setSale({...sale,labourMode:e.target.value as "CONTRACT"|"DAILY_WAGE"})}>
-              <option value="CONTRACT">Labour: Contract ₹2/kg</option>
-              <option value="DAILY_WAGE">Labour: Daily wage (no ₹2/kg)</option>
-            </select>
-          )}
-          {mode==="PET" && (
-            <span className="ad-input flex items-center">
-              {sale.labourMode==="CONTRACT"
-                ? <>Contract labour (₹2/kg): -₹{saleLabourCharges.toFixed(2)}</>
-                : <>Daily wage — pay via Labour Management (no sale deduction)</>}
+            <span className="ad-input flex items-center text-xs">
+              Labour: daily wage only — mark/pay in Labour Management (not deducted from sale)
             </span>
           )}
           <input className="ad-input" type="number" min="0" placeholder="Loading Charges" value={sale.loadingCharges||""} onChange={e=>setSale({...sale,loadingCharges:e.target.value})}/>
+          {mode==="PLASTIC" && (
+            <input className="ad-input" type="number" min="0" placeholder="Transport Charges" value={sale.transportCharges||""} onChange={e=>setSale({...sale,transportCharges:e.target.value})}/>
+          )}
+          {mode==="PLASTIC" && (
+            <input className="ad-input" type="number" min="0" placeholder="Labour (if any)" value={sale.sideLabourCharges||""} onChange={e=>setSale({...sale,sideLabourCharges:e.target.value})}/>
+          )}
+          <label className="ad-input flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={sale.withGst}
+              onChange={(e)=>setSale({...sale,withGst:e.target.checked,gstPercent:sale.gstPercent||"18"})}
+            />
+            <span>Sell with GST</span>
+          </label>
+          {sale.withGst && (
+            <>
+              <select
+                className="ad-input"
+                value={["5","12","18"].includes(String(sale.gstPercent)) ? sale.gstPercent : "custom"}
+                onChange={(e)=>{
+                  if (e.target.value==="custom") setSale({...sale,gstPercent:sale.gstPercent&&!["5","12","18"].includes(sale.gstPercent)?sale.gstPercent:""});
+                  else setSale({...sale,gstPercent:e.target.value});
+                }}
+              >
+                <option value="5">GST 5%</option>
+                <option value="12">GST 12%</option>
+                <option value="18">GST 18%</option>
+                <option value="custom">Custom %</option>
+              </select>
+              {!["5","12","18"].includes(String(sale.gstPercent)) && (
+                <input
+                  className="ad-input"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  placeholder="GST %"
+                  value={sale.gstPercent}
+                  onChange={(e)=>setSale({...sale,gstPercent:e.target.value})}
+                />
+              )}
+              <span className="ad-input flex items-center text-sm">GST amount: ₹{saleGstAmount.toFixed(2)}</span>
+            </>
+          )}
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
+          {sale.withGst && saleGstAmount>0 && (
+            <span className="ad-input flex items-center text-xs md:col-span-4 text-[var(--ad-muted)]">
+              Gross ₹{saleGrossAmount.toFixed(2)} + GST {saleGstPercent}% (₹{saleGstAmount.toFixed(2)}) = Final ₹{saleFinalAmount.toFixed(2)}
+            </span>
+          )}
+          {saleSideCostsTotal>0 && (
+            <span className="ad-input flex items-center text-xs md:col-span-4 text-[var(--ad-muted)]">
+              Company side costs (not deducted from buyer): Loading ₹{saleLoadingCharges.toFixed(2)}
+              {mode==="PLASTIC" ? ` + Transport ₹${saleTransportCharges.toFixed(2)} + Labour ₹${saleSideLabourCharges.toFixed(2)}` : ""}
+              {" "}= ₹{saleSideCostsTotal.toFixed(2)} — paid by person below
+            </span>
+          )}
+          {saleNeedsPayBy && (
+            <>
+              <PersonSelect value={sale.chargesPaidBy} onChange={(v)=>setSale({...sale,chargesPaidBy:v})} label="Payment done by" />
+              <FundingSelect value={sale.chargesFunding} onChange={(v)=>setSale({...sale,chargesFunding:v})} />
+            </>
+          )}
           {buyerAdvanceAvail>0 && editingSale===null && <label className="ad-input flex items-center gap-2 text-sm md:col-span-4 border border-[var(--ad-accent)]">
             <input type="checkbox" checked={useAdvance} onChange={e=>setUseAdvance(e.target.checked)}/>
             <span><b>{sale.customerName.trim()}</b> has advance ₹{buyerAdvanceAvail.toFixed(2)} with us. {useAdvance?`₹${advanceWillApply.toFixed(2)} will be adjusted in this sale; cash/UPI to collect: ₹${cashAfterAdvance.toFixed(2)}.`:"Advance will not be used for this sale."}</span>
@@ -1029,7 +1191,12 @@ export default function InventoryPage() {
           <input className="ad-input md:col-span-2" placeholder="Notes" value={sale.notes} onChange={e=>setSale({...sale,notes:e.target.value})}/>
           <button className="ad-btn ad-btn-primary" onClick={editingSale ? editSale : addSale}>{editingSale ? "Update Sale" : "Save Full Truck Sale"}</button>{editingSale&&<button className="ad-btn ad-btn-ghost" onClick={resetSaleForm}>Cancel</button>}
         </div>
-        <p className="mt-2 text-xs ad-muted">{mode==="PET"?"Choose Contract ₹2/kg (contractor earn) or Daily wage (mark/pay attendance in Labour Management — sale amount is not reduced).":"Plastic sales use material types with no ₹2/kg process labour deduction."} Loading charges are sale-specific. GST is intentionally not included for now.</p>
+        <p className="mt-2 text-xs ad-muted">
+          Buyer Final Amount = Gross Sale{sale.withGst?" + GST":""} (no loading / labour deducted).
+          Tick <b>Sell with GST</b> to add GST % (5 / 12 / 18 or custom) — amount is calculated on Gross.
+          Loading{mode==="PLASTIC"?" / transport / labour":""} you pay are separate company costs with <b>Payment done by</b>.
+          PET labour is daily wage via Labour Management — contract ₹2/kg on sales is removed.
+        </p>
       </div>
       {salePay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
         <h3 className="mb-3 text-sm font-semibold">Receive sale payment — sale #{salePay.saleId}</h3>
@@ -1044,8 +1211,8 @@ export default function InventoryPage() {
         </div>
       </div>}
 
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
-        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openSalePayment(s)}>Receive</button>:<span className="mr-3">PAID</span>}<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>startEditSale(s)}>Edit</button></td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>GST</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
+        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>{Number(s.gst_amount||0)>0.004?`${Number(s.gst_percent||0)}% · ₹${Number(s.gst_amount).toFixed(2)}`:"—"}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openSalePayment(s)}>Receive</button>:<span className="mr-3">PAID</span>}<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>startEditSale(s)}>Edit</button></td></tr>)}
       </tbody></table></div>
     </div>}
     {tab==="inventory" && <div className="space-y-5">
