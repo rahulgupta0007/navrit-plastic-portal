@@ -207,8 +207,14 @@ function syncSaleSideCosts(opts: {
   const paidBy = opts.paidBy || "";
   const funding = opts.fundingSource || "COMPANY";
 
+  // Only other_expenses (same as purchase transport/loading) — avoids sale_processing_costs
+  // labour_kg > 0 CHECK and prevents double-counting in the company cash book.
   sqlite.prepare("DELETE FROM other_expenses WHERE sale_id=? AND expense_type IN ('Transport','Loading','Labour')").run(opts.saleId);
-  sqlite.prepare("DELETE FROM sale_processing_costs WHERE sale_id=?").run(opts.saleId);
+  try {
+    sqlite.prepare("DELETE FROM sale_processing_costs WHERE sale_id=?").run(opts.saleId);
+  } catch {
+    /* ignore */
+  }
 
   const insertExp = sqlite.prepare(`
     INSERT INTO other_expenses
@@ -223,14 +229,6 @@ function syncSaleSideCosts(opts: {
   }
   if (labour > 0.005) {
     insertExp.run(opts.mode, opts.saleId, "Labour", `Sale labour for sale #${opts.saleId}`, labour, opts.expenseDate, paidBy, nowIso(), "", "", "", funding);
-  }
-
-  if (transport > 0.005 || loading > 0.005 || labour > 0.005) {
-    sqlite.prepare(`
-      INSERT INTO sale_processing_costs
-      (mode,sale_id,labour_kg,labour_rate,labour_cost,loading_cost,paid_by,payment_date,created_at,funding_source,transport_cost)
-      VALUES (?,?,0,0,?,?,?,?,?,?,?)
-    `).run(opts.mode, opts.saleId, labour, loading, paidBy, opts.expenseDate, nowIso(), funding, transport);
   }
 
   return { transport, loading, labour };
