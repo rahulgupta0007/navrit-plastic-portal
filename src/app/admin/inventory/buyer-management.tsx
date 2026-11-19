@@ -355,6 +355,8 @@ export default function BuyerManagement({
                       <th>Date</th>
                       <th>Amount</th>
                       <th>Used on sales</th>
+                      <th>Returned</th>
+                      <th>Left</th>
                       <th>Received by</th>
                       <th>Mode</th>
                       <th>Notes</th>
@@ -362,16 +364,22 @@ export default function BuyerManagement({
                     </tr>
                   </thead>
                   <tbody>
-                    {buyerAdvances.map((a) => (
+                    {buyerAdvances.map((a) => {
+                      const returned = Number(a.returned_amount || 0);
+                      const left = Math.round((Number(a.amount) - Number(a.used_amount || 0) - returned) * 100) / 100;
+                      const locked = Number(a.used_amount) > 0.004 || returned > 0.004;
+                      return (
                       <tr key={a.id}>
                         <td>{a.advance_date}</td>
                         <td>{money(a.amount)}</td>
                         <td>{money(a.used_amount)}</td>
+                        <td>{money(returned)}</td>
+                        <td><b>{money(Math.max(0, left))}</b></td>
                         <td>{a.received_by || "—"}</td>
                         <td>{a.payment_mode}</td>
                         <td>{a.notes || "—"}</td>
                         <td>
-                          {Number(a.used_amount) <= 0 && (
+                          {!locked && (
                             <button
                               className="text-xs font-semibold text-red-600"
                               onClick={() => {
@@ -383,7 +391,8 @@ export default function BuyerManagement({
                           )}
                         </td>
                       </tr>
-                    ))}
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>

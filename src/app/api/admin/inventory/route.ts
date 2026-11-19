@@ -353,21 +353,16 @@ function normBuyer(name: string) {
   return name.trim().toLowerCase();
 }
 
-function buyerAdvanceGivenUnused(mode: string, buyerName: string) {
-  return Math.round(Number((sqlite.prepare(
-    "SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?"
-  ).get(mode, normBuyer(buyerName)) as any)?.n || 0) * 100) / 100;
+function buyerAdvanceOpenOnRow(row: { amount: number; used_amount: number; returned_amount?: number }) {
+  return Math.round((Number(row.amount) - Number(row.used_amount || 0) - Number(row.returned_amount || 0)) * 100) / 100;
 }
 
-function buyerAdvanceReturnedTotal(mode: string, buyerName: string) {
-  return Math.round(Number((sqlite.prepare(
-    "SELECT COALESCE(SUM(amount),0) as n FROM buyer_advance_returns WHERE mode=? AND lower(trim(buyer_name))=?"
-  ).get(mode, normBuyer(buyerName)) as any)?.n || 0) * 100) / 100;
-}
-
-/** Latest advance still held for buyer = unused advances − returns paid back. */
+/** Latest advance still held for buyer (not used on sales, not returned). */
 function buyerAdvanceAvailable(mode: string, buyerName: string) {
-  return Math.round((buyerAdvanceGivenUnused(mode, buyerName) - buyerAdvanceReturnedTotal(mode, buyerName)) * 100) / 100;
+  return Math.round(Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount - used_amount - COALESCE(returned_amount,0)),0) as n
+    FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
+  `).get(mode, normBuyer(buyerName)) as any)?.n || 0) * 100) / 100;
 }
 
 /** FIFO-consume buyer advances against a sale; records an 'Advance' sale payment (no new cash). */
@@ -376,12 +371,16 @@ function applyBuyerAdvanceToSale(mode: string, buyerName: string, saleId: number
   remaining = Math.round(remaining * 100) / 100;
   if (!(remaining > 0.004)) return 0;
   const rows = sqlite.prepare(
-    "SELECT id, amount, used_amount FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=? AND amount-used_amount>0.004 ORDER BY advance_date ASC, id ASC"
-  ).all(mode, normBuyer(buyerName)) as Array<{ id: number; amount: number; used_amount: number }>;
+    `SELECT id, amount, used_amount, COALESCE(returned_amount,0) as returned_amount
+     FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
+     ORDER BY advance_date ASC, id ASC`
+  ).all(mode, normBuyer(buyerName)) as Array<{ id: number; amount: number; used_amount: number; returned_amount: number }>;
   let applied = 0;
   for (const row of rows) {
     if (remaining <= 0.004) break;
-    const take = Math.round(Math.min(remaining, Number(row.amount) - Number(row.used_amount)) * 100) / 100;
+    const open = buyerAdvanceOpenOnRow(row);
+    if (open <= 0.004) continue;
+    const take = Math.round(Math.min(remaining, open) * 100) / 100;
     if (!(take > 0)) continue;
     sqlite.prepare("UPDATE buyer_advances SET used_amount=used_amount+? WHERE id=?").run(take, row.id);
     remaining = Math.round((remaining - take) * 100) / 100;
@@ -392,6 +391,41 @@ function applyBuyerAdvanceToSale(mode: string, buyerName: string, saleId: number
       .run(mode, saleId, applied, date, "Advance", "", "Buyer advance applied", nowIso());
   }
   return applied;
+}
+
+/** FIFO-allocate a return onto advance rows' returned_amount. */
+function allocateBuyerAdvanceReturn(mode: string, buyerName: string, amount: number) {
+  let remaining = Math.round(amount * 100) / 100;
+  const rows = sqlite.prepare(
+    `SELECT id, amount, used_amount, COALESCE(returned_amount,0) as returned_amount
+     FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
+     ORDER BY advance_date ASC, id ASC`
+  ).all(mode, normBuyer(buyerName)) as Array<{ id: number; amount: number; used_amount: number; returned_amount: number }>;
+  for (const row of rows) {
+    if (remaining <= 0.004) break;
+    const open = buyerAdvanceOpenOnRow(row);
+    if (open <= 0.004) continue;
+    const take = Math.round(Math.min(remaining, open) * 100) / 100;
+    sqlite.prepare("UPDATE buyer_advances SET returned_amount=COALESCE(returned_amount,0)+? WHERE id=?").run(take, row.id);
+    remaining = Math.round((remaining - take) * 100) / 100;
+  }
+  return Math.round((amount - remaining) * 100) / 100;
+}
+
+/** Reverse FIFO returned_amount after deleting a return row (best-effort). */
+function deallocateBuyerAdvanceReturn(mode: string, buyerName: string, amount: number) {
+  let remaining = Math.round(amount * 100) / 100;
+  const rows = sqlite.prepare(
+    `SELECT id, COALESCE(returned_amount,0) as returned_amount
+     FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=? AND COALESCE(returned_amount,0)>0.004
+     ORDER BY advance_date DESC, id DESC`
+  ).all(mode, normBuyer(buyerName)) as Array<{ id: number; returned_amount: number }>;
+  for (const row of rows) {
+    if (remaining <= 0.004) break;
+    const take = Math.round(Math.min(remaining, Number(row.returned_amount)) * 100) / 100;
+    sqlite.prepare("UPDATE buyer_advances SET returned_amount=MAX(0,COALESCE(returned_amount,0)-?) WHERE id=?").run(take, row.id);
+    remaining = Math.round((remaining - take) * 100) / 100;
+  }
 }
 
 function ensureBuyer(mode: string, name: string, phone = "", location = "") {
@@ -434,11 +468,8 @@ function buyerSummaryRows() {
       ROUND(COALESCE((SELECT SUM(quantity_kg) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),0),2) AS totalKg,
       ROUND(COALESCE((SELECT SUM(amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceGiven,
       ROUND(COALESCE((SELECT SUM(used_amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceUsedOnSales,
-      ROUND(COALESCE((SELECT SUM(amount) FROM buyer_advance_returns r WHERE r.mode=u.mode AND lower(trim(r.buyer_name))=u.k),0),2) AS advanceReturned,
-      ROUND(
-        COALESCE((SELECT SUM(amount-used_amount) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0)
-        - COALESCE((SELECT SUM(amount) FROM buyer_advance_returns r WHERE r.mode=u.mode AND lower(trim(r.buyer_name))=u.k),0)
-      ,2) AS advanceBalance,
+      ROUND(COALESCE((SELECT SUM(COALESCE(returned_amount,0)) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceReturned,
+      ROUND(COALESCE((SELECT SUM(amount - used_amount - COALESCE(returned_amount,0)) FROM buyer_advances a WHERE a.mode=u.mode AND lower(trim(a.buyer_name))=u.k),0),2) AS advanceBalance,
       COALESCE(
         (SELECT phone FROM buyers b WHERE b.mode=u.mode AND lower(trim(b.name))=u.k LIMIT 1),
         (SELECT MAX(phone) FROM sales s WHERE s.mode=u.mode AND lower(trim(s.customer_name))=u.k),
@@ -952,9 +983,14 @@ export async function GET() {
     ...personAccountTotalsFlat,
   };
 
-  const buyerAdvanceUnused = Math.round(Number((sqlite.prepare("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances").get() as any)?.n || 0) * 100) / 100;
+  const buyerAdvanceBalance = Math.round(Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount - used_amount - COALESCE(returned_amount,0)),0) as n FROM buyer_advances
+  `).get() as any)?.n || 0) * 100) / 100;
+  const buyerAdvanceApplied = Math.round(Number((sqlite.prepare(`
+    SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE COALESCE(payment_mode,'')='Advance'
+  `).get() as any)?.n || 0) * 100) / 100;
   const buyerAdvanceReturnedAll = Math.round(Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advance_returns").get() as any)?.n || 0) * 100) / 100;
-  const buyerAdvanceBalance = Math.round((buyerAdvanceUnused - buyerAdvanceReturnedAll) * 100) / 100;
+  const buyerAdvanceReceivedAll = Math.round(Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advances").get() as any)?.n || 0) * 100) / 100;
   const partnerLentTotal = Math.round(Number((sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM partner_advances").get() as any)?.n || 0) * 100) / 100;
   const companyParts = companyCashflowParts();
   const petParts = modeCashflowParts("PET");
@@ -1045,7 +1081,7 @@ export async function GET() {
     sales, saleItems, salePayments, processingBatches, processingBatchItems, processingBatchOutputs, processingExpenses,
     saleProcessingCosts, otherExpenses, labourWorkers, manualLabour, plasticMaterialTypes, processingContractors, processingContractorLedger,
     processingContractorSummaries, partnerSettlements, partnerAdvances, buyers, buyerAdvances, buyerAdvanceReturns, buyerSummary, borrowingRepayments, totals,
-    buyerAdvanceBalance, partnerLentTotal,
+    buyerAdvanceBalance, buyerAdvanceApplied, buyerAdvanceReturnedAll, buyerAdvanceReceivedAll, partnerLentTotal,
     personAccountTotals, personAccountTotalsFlat, externalLoanOutstanding, reconciliation, cashflowBreakdown, businessSplit, sharedExpenseSummary,
     emailConfigured: isEmailConfigured(),
     emailDiagnostics: emailConfigDiagnostics(),
@@ -1307,9 +1343,12 @@ export async function POST(req: NextRequest) {
 
     if (body.action === "deleteBuyerAdvance") {
       const s = z.object({ id: z.number().int().positive() }).parse(body);
-      const row = sqlite.prepare("SELECT used_amount FROM buyer_advances WHERE id=?").get(s.id) as { used_amount: number } | undefined;
+      const row = sqlite.prepare("SELECT used_amount, COALESCE(returned_amount,0) as returned_amount FROM buyer_advances WHERE id=?").get(s.id) as
+        | { used_amount: number; returned_amount: number }
+        | undefined;
       if (!row) return NextResponse.json({ error: "Advance not found" }, { status: 404 });
       if (Number(row.used_amount) > 0.004) return NextResponse.json({ error: "This advance is already used against a sale and cannot be deleted" }, { status: 400 });
+      if (Number(row.returned_amount) > 0.004) return NextResponse.json({ error: "This advance already has a return allocated and cannot be deleted" }, { status: 400 });
       sqlite.prepare("DELETE FROM buyer_advances WHERE id=?").run(s.id);
       return json({ ok: true });
     }
@@ -1352,6 +1391,10 @@ export async function POST(req: NextRequest) {
         }, { status: 400 });
       }
       ensureBuyer(s.mode, s.buyerName);
+      const allocated = allocateBuyerAdvanceReturn(s.mode, s.buyerName, s.amount);
+      if (allocated + 0.005 < s.amount) {
+        return NextResponse.json({ error: "Could not allocate full return against open advance rows" }, { status: 400 });
+      }
       sqlite.prepare(
         `INSERT INTO buyer_advance_returns
          (mode, buyer_name, amount, return_date, paid_by, payment_mode, notes, created_at)
@@ -1366,8 +1409,11 @@ export async function POST(req: NextRequest) {
 
     if (body.action === "deleteBuyerAdvanceReturn") {
       const s = z.object({ id: z.number().int().positive() }).parse(body);
-      const row = sqlite.prepare("SELECT id FROM buyer_advance_returns WHERE id=?").get(s.id);
+      const row = sqlite.prepare("SELECT id, mode, buyer_name, amount FROM buyer_advance_returns WHERE id=?").get(s.id) as
+        | { id: number; mode: string; buyer_name: string; amount: number }
+        | undefined;
       if (!row) return NextResponse.json({ error: "Return not found" }, { status: 404 });
+      deallocateBuyerAdvanceReturn(row.mode, row.buyer_name, Number(row.amount));
       sqlite.prepare("DELETE FROM buyer_advance_returns WHERE id=?").run(s.id);
       return json({ ok: true });
     }

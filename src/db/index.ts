@@ -609,6 +609,7 @@ function createDb() {
       buyer_name TEXT NOT NULL,
       amount REAL NOT NULL CHECK(amount > 0),
       used_amount REAL NOT NULL DEFAULT 0 CHECK(used_amount >= 0),
+      returned_amount REAL NOT NULL DEFAULT 0 CHECK(returned_amount >= 0),
       advance_date TEXT NOT NULL,
       received_by TEXT NOT NULL DEFAULT '',
       payment_mode TEXT NOT NULL DEFAULT 'Cash',
@@ -630,6 +631,42 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS buyer_advance_returns_buyer_idx
       ON buyer_advance_returns(mode, buyer_name);
+  `);
+  // Track returns against specific advance rows (FIFO) so unused can't look open after return.
+  try { sqlite.exec("ALTER TABLE buyer_advances ADD COLUMN returned_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
+  try {
+    // One-time: if returns exist but returned_amount is still 0, allocate FIFO onto advance rows.
+    const needsBackfill = Number((sqlite.prepare(`
+      SELECT COUNT(*) as c FROM buyer_advance_returns r
+      WHERE NOT EXISTS (
+        SELECT 1 FROM buyer_advances a
+        WHERE a.mode=r.mode AND lower(trim(a.buyer_name))=lower(trim(r.buyer_name)) AND COALESCE(a.returned_amount,0)>0.004
+      )
+    `).get() as { c: number })?.c || 0);
+    if (needsBackfill > 0) {
+      const groups = sqlite.prepare(`
+        SELECT mode, lower(trim(buyer_name)) as k, MAX(buyer_name) as buyer_name, SUM(amount) as total
+        FROM buyer_advance_returns GROUP BY mode, lower(trim(buyer_name))
+      `).all() as Array<{ mode: string; k: string; buyer_name: string; total: number }>;
+      for (const g of groups) {
+        let rem = Math.round(Number(g.total) * 100) / 100;
+        const rows = sqlite.prepare(`
+          SELECT id, amount, used_amount, COALESCE(returned_amount,0) as returned_amount
+          FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
+          ORDER BY advance_date ASC, id ASC
+        `).all(g.mode, g.k) as Array<{ id: number; amount: number; used_amount: number; returned_amount: number }>;
+        for (const row of rows) {
+          if (rem <= 0.004) break;
+          const open = Math.round((Number(row.amount) - Number(row.used_amount) - Number(row.returned_amount)) * 100) / 100;
+          if (open <= 0.004) continue;
+          const take = Math.min(open, rem);
+          sqlite.prepare("UPDATE buyer_advances SET returned_amount=COALESCE(returned_amount,0)+? WHERE id=?").run(take, row.id);
+          rem = Math.round((rem - take) * 100) / 100;
+        }
+      }
+    }
+  } catch { /* ignore backfill */ }
+  sqlite.exec(`
     CREATE TABLE IF NOT EXISTS buyers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),

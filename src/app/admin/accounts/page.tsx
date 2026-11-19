@@ -110,6 +110,9 @@ type AccountsData = {
   buyerAdvances?: Row[];
   buyerAdvanceReturns?: Row[];
   buyerAdvanceBalance?: number;
+  buyerAdvanceApplied?: number;
+  buyerAdvanceReturnedAll?: number;
+  buyerAdvanceReceivedAll?: number;
   partnerLentTotal?: number;
   salePayments?: Row[];
   purchases?: Row[];
@@ -724,7 +727,13 @@ export default function AccountsPage() {
                 )}
               </p>
             </button>
-            {(Number(breakdown.buyerAdvances || 0) > 0 || Number(breakdown.buyerAdvanceReturns || 0) > 0) && (
+            {(Number(breakdown.buyerAdvances || 0) > 0 || Number(breakdown.buyerAdvanceReturns || 0) > 0) && (() => {
+              const received = Number(breakdown.buyerAdvances || 0);
+              const returned = Number(breakdown.buyerAdvanceReturns || 0);
+              const applied = Number(data?.buyerAdvanceApplied || 0);
+              const stillHeld = Number(data?.buyerAdvanceBalance || 0);
+              const cashBookNet = Math.round((received - returned) * 100) / 100;
+              return (
               <button
                 type="button"
                 className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
@@ -733,21 +742,26 @@ export default function AccountsPage() {
                   allTransactions.filter((t) => t.type === "Buyer advance" || t.type === "Buyer advance return"),
                   "/admin/vendors",
                   "Open Vendors & Buyers",
-                  "Advance in, returns out — latest left is after sales + returns"
+                  "Cash-book shows money in/out. Still held = after sales used + returns (not open cash)."
                 )}
               >
-                <p className="ad-muted">Buyer advances (cash-book)</p>
+                <p className="ad-muted">Buyer advances</p>
                 <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
-                  Received +{money(Number(breakdown.buyerAdvances || 0))}
-                  {Number(breakdown.buyerAdvanceReturns || 0) > 0
-                    ? ` · Returned −${money(Number(breakdown.buyerAdvanceReturns || 0))}`
-                    : ""}
+                  Received +{money(received)}
+                  {applied > 0.005 ? ` · Applied to sales −${money(applied)}` : ""}
+                  {returned > 0.005 ? ` · Returned −${money(returned)}` : ""}
                 </p>
-                <p className="mt-1 font-semibold text-[var(--ad-success)]">
-                  Net +{money(Number(breakdown.buyerAdvances || 0) - Number(breakdown.buyerAdvanceReturns || 0))}
+                <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
+                  Cash-book net +{money(cashBookNet)} (in − returns; sales already counted under Sales)
+                </p>
+                <p className={`mt-1 font-semibold ${stillHeld > 0.005 ? "text-[var(--ad-success)]" : "text-[var(--ad-muted)]"}`}>
+                  {stillHeld > 0.005
+                    ? `Still held ${money(stillHeld)}`
+                    : "Fully cleared · still held ₹0"}
                 </p>
               </button>
-            )}
+              );
+            })()}
             {(Number(breakdown.partnerAdvances || 0) > 0 || breakdown.partnerSettled > 0) && (() => {
               const given = Number(breakdown.partnerAdvances || 0);
               const settled = Number(breakdown.partnerSettled || 0);

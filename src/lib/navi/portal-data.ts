@@ -260,8 +260,9 @@ export function getBuyersAndVendors() {
   const vendors = sqlite.prepare(`
     SELECT id, name, phone, location FROM suppliers ORDER BY name COLLATE NOCASE LIMIT 100
   `).all();
-  const buyerAdvances = sumSql("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances")
-    - sumSql("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advance_returns");
+  const buyerAdvances = sumSql(
+    "SELECT COALESCE(SUM(amount - used_amount - COALESCE(returned_amount,0)),0) as n FROM buyer_advances"
+  );
   const vendorAdvances = sumSql("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM vendor_advances");
   return {
     buyers,
