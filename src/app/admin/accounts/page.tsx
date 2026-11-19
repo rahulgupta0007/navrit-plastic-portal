@@ -730,41 +730,39 @@ export default function AccountsPage() {
                 <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.buyerAdvances))}</p>
               </button>
             )}
-            {Number(breakdown.partnerAdvances || 0) > 0 && (
-              <button
-                type="button"
-                className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
-                onClick={() => openDetail(
-                  "Partner money given to company",
-                  allTransactions.filter((t) => t.type === "Partner lent to company"),
-                  "#partner-lend",
-                  "Open lend form"
-                )}
-              >
-                <p className="ad-muted">Partner money given (temp)</p>
-                <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.partnerAdvances))}</p>
-              </button>
-            )}
+            {(Number(breakdown.partnerAdvances || 0) > 0 || breakdown.partnerSettled > 0) && (() => {
+              const given = Number(breakdown.partnerAdvances || 0);
+              const settled = Number(breakdown.partnerSettled || 0);
+              const outstanding = Math.round((given - settled) * 100) / 100;
+              const fullySettled = Math.abs(outstanding) < 0.005;
+              return (
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)] sm:col-span-2 lg:col-span-1"
+                  onClick={() => openDetail(
+                    "Partner temp money — lend & settle history",
+                    allTransactions.filter((t) => t.type === "Partner lent to company" || t.type === "Partner settlement"),
+                    "#partner-lend",
+                    "Open lend / settle"
+                  )}
+                >
+                  <p className="ad-muted">Partner temp money (cash-book history)</p>
+                  <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
+                    Given +{money(given)} · Settled −{money(settled)}
+                  </p>
+                  <p className={`mt-1 font-semibold ${fullySettled ? "text-[var(--ad-text)]" : outstanding > 0 ? "text-[var(--ad-success)]" : "text-[var(--ad-danger)]"}`}>
+                    {fullySettled
+                      ? "Already settled · outstanding ₹0.00"
+                      : `Still outstanding ${money(outstanding)}`}
+                  </p>
+                </button>
+              );
+            })()}
             {(breakdown.borrowed > 0 || breakdown.loanRepaid > 0) && (
               <div className="rounded-lg border border-[var(--ad-border)] p-2">
                 <p className="ad-muted">Loans net</p>
                 <p className="mt-1 font-semibold">{money(breakdown.borrowed - breakdown.loanRepaid)}</p>
               </div>
-            )}
-            {breakdown.partnerSettled > 0 && (
-              <button
-                type="button"
-                className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
-                onClick={() => openDetail(
-                  "Partner settlements",
-                  allTransactions.filter((t) => t.type === "Partner settlement"),
-                  "#account-transactions",
-                  "See transactions below"
-                )}
-              >
-                <p className="ad-muted">Partner settlements</p>
-                <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(breakdown.partnerSettled)}</p>
-              </button>
             )}
           </div>
         )}
