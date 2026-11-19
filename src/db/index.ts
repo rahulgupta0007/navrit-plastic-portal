@@ -635,34 +635,32 @@ function createDb() {
   // Track returns against specific advance rows (FIFO) so unused can't look open after return.
   try { sqlite.exec("ALTER TABLE buyer_advances ADD COLUMN returned_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
   try {
-    // One-time: if returns exist but returned_amount is still 0, allocate FIFO onto advance rows.
-    const needsBackfill = Number((sqlite.prepare(`
-      SELECT COUNT(*) as c FROM buyer_advance_returns r
-      WHERE NOT EXISTS (
-        SELECT 1 FROM buyer_advances a
-        WHERE a.mode=r.mode AND lower(trim(a.buyer_name))=lower(trim(r.buyer_name)) AND COALESCE(a.returned_amount,0)>0.004
-      )
-    `).get() as { c: number })?.c || 0);
-    if (needsBackfill > 0) {
-      const groups = sqlite.prepare(`
-        SELECT mode, lower(trim(buyer_name)) as k, MAX(buyer_name) as buyer_name, SUM(amount) as total
-        FROM buyer_advance_returns GROUP BY mode, lower(trim(buyer_name))
-      `).all() as Array<{ mode: string; k: string; buyer_name: string; total: number }>;
-      for (const g of groups) {
-        let rem = Math.round(Number(g.total) * 100) / 100;
-        const rows = sqlite.prepare(`
-          SELECT id, amount, used_amount, COALESCE(returned_amount,0) as returned_amount
-          FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
-          ORDER BY advance_date ASC, id ASC
-        `).all(g.mode, g.k) as Array<{ id: number; amount: number; used_amount: number; returned_amount: number }>;
-        for (const row of rows) {
-          if (rem <= 0.004) break;
-          const open = Math.round((Number(row.amount) - Number(row.used_amount) - Number(row.returned_amount)) * 100) / 100;
-          if (open <= 0.004) continue;
-          const take = Math.min(open, rem);
-          sqlite.prepare("UPDATE buyer_advances SET returned_amount=COALESCE(returned_amount,0)+? WHERE id=?").run(take, row.id);
-          rem = Math.round((rem - take) * 100) / 100;
-        }
+    // Allocate any return totals not yet reflected on advance rows (FIFO).
+    const groups = sqlite.prepare(`
+      SELECT r.mode, lower(trim(r.buyer_name)) as k,
+             ROUND(COALESCE(SUM(r.amount),0),2) as returned_total,
+             ROUND(COALESCE((
+               SELECT SUM(COALESCE(a.returned_amount,0)) FROM buyer_advances a
+               WHERE a.mode=r.mode AND lower(trim(a.buyer_name))=lower(trim(r.buyer_name))
+             ),0),2) as allocated
+      FROM buyer_advance_returns r
+      GROUP BY r.mode, lower(trim(r.buyer_name))
+      HAVING returned_total > allocated + 0.004
+    `).all() as Array<{ mode: string; k: string; returned_total: number; allocated: number }>;
+    for (const g of groups) {
+      let rem = Math.round((Number(g.returned_total) - Number(g.allocated)) * 100) / 100;
+      const rows = sqlite.prepare(`
+        SELECT id, amount, used_amount, COALESCE(returned_amount,0) as returned_amount
+        FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
+        ORDER BY advance_date ASC, id ASC
+      `).all(g.mode, g.k) as Array<{ id: number; amount: number; used_amount: number; returned_amount: number }>;
+      for (const row of rows) {
+        if (rem <= 0.004) break;
+        const open = Math.round((Number(row.amount) - Number(row.used_amount) - Number(row.returned_amount)) * 100) / 100;
+        if (open <= 0.004) continue;
+        const take = Math.min(open, rem);
+        sqlite.prepare("UPDATE buyer_advances SET returned_amount=COALESCE(returned_amount,0)+? WHERE id=?").run(take, row.id);
+        rem = Math.round((rem - take) * 100) / 100;
       }
     }
   } catch { /* ignore backfill */ }
