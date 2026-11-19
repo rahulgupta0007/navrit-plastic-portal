@@ -50,7 +50,7 @@ export default function InventoryPage() {
   const [customExpenseTypes,setCustomExpenseTypes] = useState<string[]>([]);
   const [showNewExpenseType,setShowNewExpenseType] = useState(false);
   const [newExpenseTypeName,setNewExpenseTypeName] = useState("");
-  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY" as FundingSource,labourMode:"DAILY_WAGE" as "CONTRACT"|"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
+  const [sale,setSale] = useState({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY" as FundingSource,labourMode:"DAILY_WAGE" as "CONTRACT"|"DAILY_WAGE",withGst:false,gstPercent:"18",saleDate:new Date().toISOString().slice(0,10),notes:""});
   const [useAdvance,setUseAdvance] = useState(true);
   const [editingSale,setEditingSale] = useState<number|null>(null);
   const [saleItems,setSaleItems] = useState([{materialCategory:"Natural Bottles",materialVariant:"Green",quantityKg:"",ratePerKg:""}]);
@@ -162,10 +162,12 @@ export default function InventoryPage() {
   const saleLoadingCharges=Number(sale.loadingCharges||0);
   const saleTransportCharges=mode==="PLASTIC"?Number(sale.transportCharges||0):0;
   const saleSideLabourCharges=mode==="PLASTIC"?Number(sale.sideLabourCharges||0):0;
-  // Buyer always pays full gross. Loading (PET/Plastic) + Plastic transport/labour are
+  const saleGstPercent=sale.withGst?Math.max(0,Number(sale.gstPercent||0)):0;
+  const saleGstAmount=saleGstPercent>0?Math.round((saleGrossAmount*saleGstPercent/100)*100)/100:0;
+  // Buyer pays Gross + GST. Loading (PET/Plastic) + Plastic transport/labour are
   // company side costs paid by a person — not deducted from sale / final amount.
   // PET labour is daily wage only (Labour Management) — no contract ₹2/kg on sales.
-  const saleFinalAmount=saleGrossAmount;
+  const saleFinalAmount=Math.round((saleGrossAmount+saleGstAmount)*100)/100;
   const saleSideCostsTotal=saleLoadingCharges+saleTransportCharges+saleSideLabourCharges;
   const saleNeedsPayBy=saleSideCostsTotal>0;
   const modeBuyers=useMemo(()=>{
@@ -312,7 +314,7 @@ export default function InventoryPage() {
 
   function resetSaleForm() {
     setEditingSale(null);
-    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY",labourMode:"DAILY_WAGE",saleDate:new Date().toISOString().slice(0,10),notes:""});
+    setSale({customerName:"",phone:"",location:"",receivedAmount:"",receivedBy:"",paymentMode:"Cash",loadingCharges:"",transportCharges:"",sideLabourCharges:"",chargesPaidBy:"",chargesFunding:"COMPANY",labourMode:"DAILY_WAGE",withGst:false,gstPercent:"18",saleDate:new Date().toISOString().slice(0,10),notes:""});
     setSaleItems([defaultSaleItem()]);
   }
 
@@ -355,7 +357,7 @@ export default function InventoryPage() {
       setMessage("Please select Payment done by for loading" + (mode==="PLASTIC" ? " / transport / labour" : ""));
       return;
     }
-    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:"DAILY_WAGE",saleDate:sale.saleDate,useAdvance,notes:sale.notes});
+    const ok=await post("addSale",{mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items,receivedAmount:sale.receivedAmount===""?undefined:Number(sale.receivedAmount),receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),gstPercent:saleGstPercent,chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:"DAILY_WAGE",saleDate:sale.saleDate,useAdvance,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -365,7 +367,7 @@ export default function InventoryPage() {
       setMessage("Please select Payment done by for loading" + (mode==="PLASTIC" ? " / transport / labour" : ""));
       return;
     }
-    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:"DAILY_WAGE",receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
+    const ok=await post("updateSale",{saleId:editingSale,mode,customerName:sale.customerName,phone:sale.phone,location:sale.location,items:saleItemsPayload(),loadingCharges:Number(sale.loadingCharges||0),transportCharges:Number(sale.transportCharges||0),sideLabourCharges:Number(sale.sideLabourCharges||0),gstPercent:saleGstPercent,chargesPaidBy:sale.chargesPaidBy||undefined,fundingSource:sale.chargesFunding,labourMode:"DAILY_WAGE",receivedBy:sale.receivedBy||undefined,paymentMode:sale.paymentMode,saleDate:sale.saleDate,notes:sale.notes});
     if(ok) resetSaleForm();
   }
 
@@ -373,6 +375,7 @@ export default function InventoryPage() {
     const items=(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id);
     const payments=(data.salePayments||[]).filter((x:any)=>x.sale_id===s.id);
     const latestPayment=payments.find((x:any)=>x.payment_mode!=="Advance")||payments[0];
+    const gstPct=Number(s.gst_percent||0);
     setEditingSale(s.id);
     setSale({
       customerName:s.customer_name||"",
@@ -387,6 +390,8 @@ export default function InventoryPage() {
       chargesPaidBy:"",
       chargesFunding:"COMPANY" as FundingSource,
       labourMode:"DAILY_WAGE",
+      withGst:gstPct>0.004,
+      gstPercent:gstPct>0.004?String(gstPct):"18",
       saleDate:s.sale_date,
       notes:s.notes||""
     });
@@ -1119,7 +1124,50 @@ export default function InventoryPage() {
           {mode==="PLASTIC" && (
             <input className="ad-input" type="number" min="0" placeholder="Labour (if any)" value={sale.sideLabourCharges||""} onChange={e=>setSale({...sale,sideLabourCharges:e.target.value})}/>
           )}
+          <label className="ad-input flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={sale.withGst}
+              onChange={(e)=>setSale({...sale,withGst:e.target.checked,gstPercent:sale.gstPercent||"18"})}
+            />
+            <span>Sell with GST</span>
+          </label>
+          {sale.withGst && (
+            <>
+              <select
+                className="ad-input"
+                value={["5","12","18"].includes(String(sale.gstPercent)) ? sale.gstPercent : "custom"}
+                onChange={(e)=>{
+                  if (e.target.value==="custom") setSale({...sale,gstPercent:sale.gstPercent&&!["5","12","18"].includes(sale.gstPercent)?sale.gstPercent:""});
+                  else setSale({...sale,gstPercent:e.target.value});
+                }}
+              >
+                <option value="5">GST 5%</option>
+                <option value="12">GST 12%</option>
+                <option value="18">GST 18%</option>
+                <option value="custom">Custom %</option>
+              </select>
+              {!["5","12","18"].includes(String(sale.gstPercent)) && (
+                <input
+                  className="ad-input"
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  placeholder="GST %"
+                  value={sale.gstPercent}
+                  onChange={(e)=>setSale({...sale,gstPercent:e.target.value})}
+                />
+              )}
+              <span className="ad-input flex items-center text-sm">GST amount: ₹{saleGstAmount.toFixed(2)}</span>
+            </>
+          )}
           <span className="ad-input flex items-center font-semibold">Final Amount: ₹{saleFinalAmount.toFixed(2)}</span>
+          {sale.withGst && saleGstAmount>0 && (
+            <span className="ad-input flex items-center text-xs md:col-span-4 text-[var(--ad-muted)]">
+              Gross ₹{saleGrossAmount.toFixed(2)} + GST {saleGstPercent}% (₹{saleGstAmount.toFixed(2)}) = Final ₹{saleFinalAmount.toFixed(2)}
+            </span>
+          )}
           {saleSideCostsTotal>0 && (
             <span className="ad-input flex items-center text-xs md:col-span-4 text-[var(--ad-muted)]">
               Company side costs (not deducted from buyer): Loading ₹{saleLoadingCharges.toFixed(2)}
@@ -1144,10 +1192,10 @@ export default function InventoryPage() {
           <button className="ad-btn ad-btn-primary" onClick={editingSale ? editSale : addSale}>{editingSale ? "Update Sale" : "Save Full Truck Sale"}</button>{editingSale&&<button className="ad-btn ad-btn-ghost" onClick={resetSaleForm}>Cancel</button>}
         </div>
         <p className="mt-2 text-xs ad-muted">
-          Buyer Final Amount = Gross Sale (no loading / labour deducted).
+          Buyer Final Amount = Gross Sale{sale.withGst?" + GST":""} (no loading / labour deducted).
+          Tick <b>Sell with GST</b> to add GST % (5 / 12 / 18 or custom) — amount is calculated on Gross.
           Loading{mode==="PLASTIC"?" / transport / labour":""} you pay are separate company costs with <b>Payment done by</b>.
           PET labour is daily wage via Labour Management — contract ₹2/kg on sales is removed.
-          GST is intentionally not included for now.
         </p>
       </div>
       {salePay && <div className="ad-card p-4 border border-[var(--ad-accent)]">
@@ -1163,8 +1211,8 @@ export default function InventoryPage() {
         </div>
       </div>}
 
-      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
-        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openSalePayment(s)}>Receive</button>:<span className="mr-3">PAID</span>}<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>startEditSale(s)}>Edit</button></td></tr>)}
+      <div className="ad-table-wrap"><table className="ad-table"><thead><tr><th>Date</th><th>Buyer</th><th>Contact</th><th>Materials</th><th>Total</th><th>GST</th><th>Received</th><th>Pending</th><th>Action</th></tr></thead><tbody>
+        {(data.sales||[]).filter((s:any)=>s.mode===mode).map((s:any)=><tr key={s.id}><td>{s.sale_date}</td><td>{s.customer_name}</td><td>{s.phone||"—"}</td><td>{(data.saleItems||[]).filter((x:any)=>x.sale_id===s.id).map((x:any)=>x.material_variant+" "+x.quantity_kg+"kg @ ₹"+x.rate_per_kg).join(" | ")||s.material_variant}</td><td>₹{s.total_amount}</td><td>{Number(s.gst_amount||0)>0.004?`${Number(s.gst_percent||0)}% · ₹${Number(s.gst_amount).toFixed(2)}`:"—"}</td><td>₹{s.received_amount}</td><td>₹{s.credit_amount}</td><td>{s.credit_amount>0?<button className="text-xs font-semibold text-[var(--ad-accent)] mr-3" onClick={()=>openSalePayment(s)}>Receive</button>:<span className="mr-3">PAID</span>}<button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={()=>startEditSale(s)}>Edit</button></td></tr>)}
       </tbody></table></div>
     </div>}
     {tab==="inventory" && <div className="space-y-5">
