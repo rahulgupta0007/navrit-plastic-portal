@@ -1,6 +1,5 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "fs";
-import path from "path";
 import {
   assertPersistentDataDir,
   findExistingDbCandidates,
@@ -457,6 +456,8 @@ function createDb() {
     "ALTER TABLE processing_manual_labour ADD COLUMN hours REAL NOT NULL DEFAULT 0",
     "ALTER TABLE processing_manual_labour ADD COLUMN payment_kind TEXT NOT NULL DEFAULT 'WAGE'",
     "ALTER TABLE sales ADD COLUMN labour_mode TEXT NOT NULL DEFAULT 'CONTRACT'",
+    "ALTER TABLE sales ADD COLUMN transport_charges REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE sale_processing_costs ADD COLUMN transport_cost REAL NOT NULL DEFAULT 0",
   ]) {
     try { sqlite.exec(migration); } catch { /* column already exists */ }
   }
@@ -608,6 +609,7 @@ function createDb() {
       buyer_name TEXT NOT NULL,
       amount REAL NOT NULL CHECK(amount > 0),
       used_amount REAL NOT NULL DEFAULT 0 CHECK(used_amount >= 0),
+      returned_amount REAL NOT NULL DEFAULT 0 CHECK(returned_amount >= 0),
       advance_date TEXT NOT NULL,
       received_by TEXT NOT NULL DEFAULT '',
       payment_mode TEXT NOT NULL DEFAULT 'Cash',
@@ -616,6 +618,55 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS buyer_advances_buyer_idx
       ON buyer_advances(mode, buyer_name);
+    CREATE TABLE IF NOT EXISTS buyer_advance_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      buyer_name TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      return_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      payment_mode TEXT NOT NULL DEFAULT 'Cash',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS buyer_advance_returns_buyer_idx
+      ON buyer_advance_returns(mode, buyer_name);
+  `);
+  // Track returns against specific advance rows (FIFO) so unused can't look open after return.
+  try { sqlite.exec("ALTER TABLE buyer_advances ADD COLUMN returned_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
+  try {
+    // One-time: if returns exist but returned_amount is still 0, allocate FIFO onto advance rows.
+    const needsBackfill = Number((sqlite.prepare(`
+      SELECT COUNT(*) as c FROM buyer_advance_returns r
+      WHERE NOT EXISTS (
+        SELECT 1 FROM buyer_advances a
+        WHERE a.mode=r.mode AND lower(trim(a.buyer_name))=lower(trim(r.buyer_name)) AND COALESCE(a.returned_amount,0)>0.004
+      )
+    `).get() as { c: number })?.c || 0);
+    if (needsBackfill > 0) {
+      const groups = sqlite.prepare(`
+        SELECT mode, lower(trim(buyer_name)) as k, MAX(buyer_name) as buyer_name, SUM(amount) as total
+        FROM buyer_advance_returns GROUP BY mode, lower(trim(buyer_name))
+      `).all() as Array<{ mode: string; k: string; buyer_name: string; total: number }>;
+      for (const g of groups) {
+        let rem = Math.round(Number(g.total) * 100) / 100;
+        const rows = sqlite.prepare(`
+          SELECT id, amount, used_amount, COALESCE(returned_amount,0) as returned_amount
+          FROM buyer_advances WHERE mode=? AND lower(trim(buyer_name))=?
+          ORDER BY advance_date ASC, id ASC
+        `).all(g.mode, g.k) as Array<{ id: number; amount: number; used_amount: number; returned_amount: number }>;
+        for (const row of rows) {
+          if (rem <= 0.004) break;
+          const open = Math.round((Number(row.amount) - Number(row.used_amount) - Number(row.returned_amount)) * 100) / 100;
+          if (open <= 0.004) continue;
+          const take = Math.min(open, rem);
+          sqlite.prepare("UPDATE buyer_advances SET returned_amount=COALESCE(returned_amount,0)+? WHERE id=?").run(take, row.id);
+          rem = Math.round((rem - take) * 100) / 100;
+        }
+      }
+    }
+  } catch { /* ignore backfill */ }
+  sqlite.exec(`
     CREATE TABLE IF NOT EXISTS buyers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
@@ -661,6 +712,7 @@ function createDb() {
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
           purchase_id INTEGER REFERENCES purchases(id) ON DELETE SET NULL,
+          sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE,
           expense_type TEXT NOT NULL,
           description TEXT NOT NULL DEFAULT '',
           amount REAL NOT NULL CHECK(amount >= 0),
@@ -676,8 +728,8 @@ function createDb() {
       `);
       sqlite.exec(`
         INSERT INTO other_expenses_new
-        (id,mode,purchase_id,expense_type,description,amount,expense_date,created_at,expense_frequency,paid_by,billing_month,billing_start_date,billing_end_date,funding_source)
-        SELECT id,mode,purchase_id,expense_type,description,amount,expense_date,created_at,
+        (id,mode,purchase_id,sale_id,expense_type,description,amount,expense_date,created_at,expense_frequency,paid_by,billing_month,billing_start_date,billing_end_date,funding_source)
+        SELECT id,mode,purchase_id,NULL,expense_type,description,amount,expense_date,created_at,
                COALESCE(expense_frequency,'ONE_TIME'), COALESCE(paid_by,''), COALESCE(billing_month,''),
                COALESCE(billing_start_date,''), COALESCE(billing_end_date,''), COALESCE(funding_source,'COMPANY')
         FROM other_expenses
@@ -692,6 +744,78 @@ function createDb() {
     try { sqlite.exec("PRAGMA foreign_keys=ON"); } catch { /* ignore */ }
     throw error;
   }
+  // Sale-linked side costs (Plastic transport/loading/labour) — after SHARED rebuild.
+  try { sqlite.exec("ALTER TABLE other_expenses ADD COLUMN sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE"); } catch { /* exists */ }
+  try { sqlite.exec("CREATE INDEX IF NOT EXISTS other_expenses_sale_idx ON other_expenses(sale_id)"); } catch { /* ignore */ }
+
+  // Machine purchases + factory/setup costs (capital outlays linked into other_expenses for cash book).
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS machines (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
+      name TEXT NOT NULL,
+      vendor_name TEXT NOT NULL DEFAULT '',
+      purchase_date TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      paid_amount REAL NOT NULL DEFAULT 0,
+      credit_amount REAL NOT NULL DEFAULT 0,
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      other_expense_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS machines_mode_date_idx ON machines(mode, purchase_date);
+    CREATE TABLE IF NOT EXISTS machine_setups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC','SHARED')),
+      machine_id INTEGER REFERENCES machines(id) ON DELETE SET NULL,
+      title TEXT NOT NULL,
+      setup_date TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      other_expense_id INTEGER,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS machine_setups_mode_date_idx ON machine_setups(mode, setup_date);
+  `);
+  // Advance / partial payment on machine orders.
+  try { sqlite.exec("ALTER TABLE machines ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
+  try { sqlite.exec("ALTER TABLE machines ADD COLUMN credit_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS machine_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+      amount REAL NOT NULL CHECK(amount > 0),
+      payment_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      other_expense_id INTEGER,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS machine_payments_machine_idx ON machine_payments(machine_id, payment_date);
+  `);
+  // Existing fully-paid machine rows: treat prior amount as already paid.
+  try {
+    sqlite.exec(`
+      UPDATE machines
+      SET paid_amount = amount, credit_amount = 0
+      WHERE COALESCE(paid_amount,0) = 0 AND COALESCE(credit_amount,0) = 0 AND other_expense_id IS NOT NULL
+    `);
+    sqlite.exec(`
+      INSERT INTO machine_payments (machine_id, amount, payment_date, paid_by, funding_source, notes, other_expense_id, created_at)
+      SELECT m.id, m.paid_amount, m.purchase_date, m.paid_by, m.funding_source, 'Initial payment', m.other_expense_id, m.created_at
+      FROM machines m
+      WHERE m.paid_amount > 0.005
+        AND m.other_expense_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM machine_payments p WHERE p.machine_id = m.id)
+    `);
+  } catch { /* ignore backfill */ }
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.
   try {

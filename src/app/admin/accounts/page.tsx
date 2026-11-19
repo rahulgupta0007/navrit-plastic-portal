@@ -5,7 +5,6 @@ import Link from "next/link";
 import { AdminShell } from "@/components/admin-shell";
 import { useBusinessMode } from "@/components/business-mode-provider";
 import { ACCOUNT_PERSONS, isAccountPerson, type AccountPerson } from "@/lib/account-persons";
-import { AdminSelect } from "@/components/admin-select";
 import { PersonSelect } from "@/components/person-select";
 import { ArrowDownLeft, ArrowUpRight, RefreshCw, X } from "lucide-react";
 
@@ -57,6 +56,7 @@ type Reconciliation = {
 type CashflowBreakdown = {
   salesReceived: number;
   buyerAdvances?: number;
+  buyerAdvanceReturns?: number;
   partnerAdvances?: number;
   vendorPayments: number;
   borrowed: number;
@@ -108,7 +108,11 @@ type AccountsData = {
   partnerSettlements?: Row[];
   partnerAdvances?: Row[];
   buyerAdvances?: Row[];
+  buyerAdvanceReturns?: Row[];
   buyerAdvanceBalance?: number;
+  buyerAdvanceApplied?: number;
+  buyerAdvanceReturnedAll?: number;
+  buyerAdvanceReceivedAll?: number;
   partnerLentTotal?: number;
   salePayments?: Row[];
   purchases?: Row[];
@@ -199,7 +203,7 @@ export default function AccountsPage() {
     } finally {
       setLoading(false);
     }
-  }, [mode]);
+  }, []);
 
   useEffect(() => {
     void load();
@@ -484,6 +488,15 @@ export default function AccountsPage() {
       direction: "in",
     }));
 
+    (data?.buyerAdvanceReturns || []).forEach((x) => rows.push({
+      date: String(x.return_date ?? ""),
+      type: "Buyer advance return",
+      description: `${x.mode || ""} · Advance returned to ${x.buyer_name}${x.notes ? ` — ${x.notes}` : ""}`.trim(),
+      person: String(x.paid_by ?? ""),
+      amount: Number(x.amount || 0),
+      direction: "out",
+    }));
+
     (data?.partnerAdvances || []).forEach((x) => {
       const lender = String(x.person ?? "");
       const holder = String(x.held_by || lender);
@@ -649,7 +662,7 @@ export default function AccountsPage() {
           <p className={`mt-1 text-3xl font-bold ${companyBalance < 0 ? "text-[var(--ad-danger)]" : ""}`}>{money(companyBalance)}</p>
           <p className="ad-muted mt-2 text-xs leading-relaxed">
             One cash book for the firm. PET sale or Plastic purchase both move this balance.
-            Sales + Buyer advances − Vendor payments − Expenses − Labour − Contractor cash + Loans + Partner money given − Repayments − Partner settlements.
+            Sales + Buyer advances − Buyer advance returns − Vendor payments − Expenses − Labour − Contractor cash + Loans + Partner money given − Repayments − Partner settlements.
             Attendance-only labour does not hit this book. Unpaid purchases stay as vendor dues until paid.
           </p>
         </button>
@@ -714,57 +727,74 @@ export default function AccountsPage() {
                 )}
               </p>
             </button>
-            {Number(breakdown.buyerAdvances || 0) > 0 && (
+            {(Number(breakdown.buyerAdvances || 0) > 0 || Number(breakdown.buyerAdvanceReturns || 0) > 0) && (() => {
+              const received = Number(breakdown.buyerAdvances || 0);
+              const returned = Number(breakdown.buyerAdvanceReturns || 0);
+              const applied = Number(data?.buyerAdvanceApplied || 0);
+              const stillHeld = Number(data?.buyerAdvanceBalance || 0);
+              const cashBookNet = Math.round((received - returned) * 100) / 100;
+              return (
               <button
                 type="button"
                 className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
                 onClick={() => openDetail(
                   "Buyer advances",
-                  allTransactions.filter((t) => t.type === "Buyer advance"),
+                  allTransactions.filter((t) => t.type === "Buyer advance" || t.type === "Buyer advance return"),
                   "/admin/vendors",
                   "Open Vendors & Buyers",
-                  "Advance money received from buyers"
+                  "Cash-book shows money in/out. Still held = after sales used + returns (not open cash)."
                 )}
               >
-                <p className="ad-muted">Buyer advances received</p>
-                <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.buyerAdvances))}</p>
+                <p className="ad-muted">Buyer advances</p>
+                <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
+                  Received +{money(received)}
+                  {applied > 0.005 ? ` · Applied to sales −${money(applied)}` : ""}
+                  {returned > 0.005 ? ` · Returned −${money(returned)}` : ""}
+                </p>
+                <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
+                  Cash-book net +{money(cashBookNet)} (in − returns; sales already counted under Sales)
+                </p>
+                <p className={`mt-1 font-semibold ${stillHeld > 0.005 ? "text-[var(--ad-success)]" : "text-[var(--ad-muted)]"}`}>
+                  {stillHeld > 0.005
+                    ? `Still held ${money(stillHeld)}`
+                    : "Fully cleared · still held ₹0"}
+                </p>
               </button>
-            )}
-            {Number(breakdown.partnerAdvances || 0) > 0 && (
-              <button
-                type="button"
-                className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
-                onClick={() => openDetail(
-                  "Partner money given to company",
-                  allTransactions.filter((t) => t.type === "Partner lent to company"),
-                  "#partner-lend",
-                  "Open lend form"
-                )}
-              >
-                <p className="ad-muted">Partner money given (temp)</p>
-                <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.partnerAdvances))}</p>
-              </button>
-            )}
+              );
+            })()}
+            {(Number(breakdown.partnerAdvances || 0) > 0 || breakdown.partnerSettled > 0) && (() => {
+              const given = Number(breakdown.partnerAdvances || 0);
+              const settled = Number(breakdown.partnerSettled || 0);
+              const outstanding = Math.round((given - settled) * 100) / 100;
+              const fullySettled = Math.abs(outstanding) < 0.005;
+              return (
+                <button
+                  type="button"
+                  className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)] sm:col-span-2 lg:col-span-1"
+                  onClick={() => openDetail(
+                    "Partner temp money — lend & settle history",
+                    allTransactions.filter((t) => t.type === "Partner lent to company" || t.type === "Partner settlement"),
+                    "#partner-lend",
+                    "Open lend / settle"
+                  )}
+                >
+                  <p className="ad-muted">Partner temp money (cash-book history)</p>
+                  <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
+                    Given +{money(given)} · Settled −{money(settled)}
+                  </p>
+                  <p className={`mt-1 font-semibold ${fullySettled ? "text-[var(--ad-text)]" : outstanding > 0 ? "text-[var(--ad-success)]" : "text-[var(--ad-danger)]"}`}>
+                    {fullySettled
+                      ? "Already settled · outstanding ₹0.00"
+                      : `Still outstanding ${money(outstanding)}`}
+                  </p>
+                </button>
+              );
+            })()}
             {(breakdown.borrowed > 0 || breakdown.loanRepaid > 0) && (
               <div className="rounded-lg border border-[var(--ad-border)] p-2">
                 <p className="ad-muted">Loans net</p>
                 <p className="mt-1 font-semibold">{money(breakdown.borrowed - breakdown.loanRepaid)}</p>
               </div>
-            )}
-            {breakdown.partnerSettled > 0 && (
-              <button
-                type="button"
-                className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
-                onClick={() => openDetail(
-                  "Partner settlements",
-                  allTransactions.filter((t) => t.type === "Partner settlement"),
-                  "#account-transactions",
-                  "See transactions below"
-                )}
-              >
-                <p className="ad-muted">Partner settlements</p>
-                <p className="mt-1 font-semibold text-[var(--ad-danger)]">−{money(breakdown.partnerSettled)}</p>
-              </button>
             )}
           </div>
         )}
@@ -819,8 +849,9 @@ export default function AccountsPage() {
             className="rounded-lg border border-[var(--ad-border)] p-3 text-left"
             onClick={() => window.location.assign("/admin/vendors")}
           >
-            <p className="ad-muted text-xs">Buyer advance held (to adjust in sales)</p>
+            <p className="ad-muted text-xs">Buyer advance left (latest)</p>
             <p className="mt-1 text-lg font-bold">{money(Number(data?.buyerAdvanceBalance || 0))}</p>
+            <p className="ad-muted mt-1 text-[10px]">After material/sales used + returns</p>
           </button>
           <div className="rounded-lg border border-[var(--ad-border)] p-3">
             <p className="ad-muted text-xs">External loans outstanding</p>
