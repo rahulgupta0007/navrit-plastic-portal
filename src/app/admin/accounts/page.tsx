@@ -56,6 +56,7 @@ type Reconciliation = {
 type CashflowBreakdown = {
   salesReceived: number;
   buyerAdvances?: number;
+  buyerAdvanceReturns?: number;
   partnerAdvances?: number;
   vendorPayments: number;
   borrowed: number;
@@ -107,6 +108,7 @@ type AccountsData = {
   partnerSettlements?: Row[];
   partnerAdvances?: Row[];
   buyerAdvances?: Row[];
+  buyerAdvanceReturns?: Row[];
   buyerAdvanceBalance?: number;
   partnerLentTotal?: number;
   salePayments?: Row[];
@@ -483,6 +485,15 @@ export default function AccountsPage() {
       direction: "in",
     }));
 
+    (data?.buyerAdvanceReturns || []).forEach((x) => rows.push({
+      date: String(x.return_date ?? ""),
+      type: "Buyer advance return",
+      description: `${x.mode || ""} · Advance returned to ${x.buyer_name}${x.notes ? ` — ${x.notes}` : ""}`.trim(),
+      person: String(x.paid_by ?? ""),
+      amount: Number(x.amount || 0),
+      direction: "out",
+    }));
+
     (data?.partnerAdvances || []).forEach((x) => {
       const lender = String(x.person ?? "");
       const holder = String(x.held_by || lender);
@@ -648,7 +659,7 @@ export default function AccountsPage() {
           <p className={`mt-1 text-3xl font-bold ${companyBalance < 0 ? "text-[var(--ad-danger)]" : ""}`}>{money(companyBalance)}</p>
           <p className="ad-muted mt-2 text-xs leading-relaxed">
             One cash book for the firm. PET sale or Plastic purchase both move this balance.
-            Sales + Buyer advances − Vendor payments − Expenses − Labour − Contractor cash + Loans + Partner money given − Repayments − Partner settlements.
+            Sales + Buyer advances − Buyer advance returns − Vendor payments − Expenses − Labour − Contractor cash + Loans + Partner money given − Repayments − Partner settlements.
             Attendance-only labour does not hit this book. Unpaid purchases stay as vendor dues until paid.
           </p>
         </button>
@@ -713,20 +724,28 @@ export default function AccountsPage() {
                 )}
               </p>
             </button>
-            {Number(breakdown.buyerAdvances || 0) > 0 && (
+            {(Number(breakdown.buyerAdvances || 0) > 0 || Number(breakdown.buyerAdvanceReturns || 0) > 0) && (
               <button
                 type="button"
                 className="rounded-lg border border-[var(--ad-border)] p-2 text-left hover:border-[var(--ad-accent)]"
                 onClick={() => openDetail(
                   "Buyer advances",
-                  allTransactions.filter((t) => t.type === "Buyer advance"),
+                  allTransactions.filter((t) => t.type === "Buyer advance" || t.type === "Buyer advance return"),
                   "/admin/vendors",
                   "Open Vendors & Buyers",
-                  "Advance money received from buyers"
+                  "Advance in, returns out — latest left is after sales + returns"
                 )}
               >
-                <p className="ad-muted">Buyer advances received</p>
-                <p className="mt-1 font-semibold text-[var(--ad-success)]">+{money(Number(breakdown.buyerAdvances))}</p>
+                <p className="ad-muted">Buyer advances (cash-book)</p>
+                <p className="mt-1 text-[11px] text-[var(--ad-muted)]">
+                  Received +{money(Number(breakdown.buyerAdvances || 0))}
+                  {Number(breakdown.buyerAdvanceReturns || 0) > 0
+                    ? ` · Returned −${money(Number(breakdown.buyerAdvanceReturns || 0))}`
+                    : ""}
+                </p>
+                <p className="mt-1 font-semibold text-[var(--ad-success)]">
+                  Net +{money(Number(breakdown.buyerAdvances || 0) - Number(breakdown.buyerAdvanceReturns || 0))}
+                </p>
               </button>
             )}
             {(Number(breakdown.partnerAdvances || 0) > 0 || breakdown.partnerSettled > 0) && (() => {
@@ -816,8 +835,9 @@ export default function AccountsPage() {
             className="rounded-lg border border-[var(--ad-border)] p-3 text-left"
             onClick={() => window.location.assign("/admin/vendors")}
           >
-            <p className="ad-muted text-xs">Buyer advance held (to adjust in sales)</p>
+            <p className="ad-muted text-xs">Buyer advance left (latest)</p>
             <p className="mt-1 text-lg font-bold">{money(Number(data?.buyerAdvanceBalance || 0))}</p>
+            <p className="ad-muted mt-1 text-[10px]">After material/sales used + returns</p>
           </button>
           <div className="rounded-lg border border-[var(--ad-border)] p-3">
             <p className="ad-muted text-xs">External loans outstanding</p>

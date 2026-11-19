@@ -617,6 +617,19 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS buyer_advances_buyer_idx
       ON buyer_advances(mode, buyer_name);
+    CREATE TABLE IF NOT EXISTS buyer_advance_returns (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
+      buyer_name TEXT NOT NULL,
+      amount REAL NOT NULL CHECK(amount > 0),
+      return_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      payment_mode TEXT NOT NULL DEFAULT 'Cash',
+      notes TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS buyer_advance_returns_buyer_idx
+      ON buyer_advance_returns(mode, buyer_name);
     CREATE TABLE IF NOT EXISTS buyers (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),

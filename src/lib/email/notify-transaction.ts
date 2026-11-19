@@ -156,6 +156,7 @@ export const TRANSACTION_EMAIL_ACTIONS = new Set([
   "addVendorAdvance",
   "addBuyerAdvance",
   "applyBuyerAdvance",
+  "returnBuyerAdvance",
   "addManualLabour",
   "updateManualLabour",
   "addContractorAdvance",
@@ -202,6 +203,7 @@ export function buildTxNotifyFromAction(
     addVendorAdvance: "Vendor advance",
     addBuyerAdvance: "Buyer advance",
     applyBuyerAdvance: "Buyer advance applied",
+    returnBuyerAdvance: "Buyer advance returned",
     addManualLabour: "Labour entry",
     updateManualLabour: "Labour entry updated",
     addContractorAdvance: "Contractor advance",
@@ -287,6 +289,12 @@ export function buildTxNotifyFromAction(
     case "applyBuyerAdvance":
       fields.push({ label: "Buyer", value: str(body.buyerName) });
       fields.push({ label: "Date", value: str(body.advanceDate || body.paymentDate) });
+      amount = Number(body.amount);
+      break;
+    case "returnBuyerAdvance":
+      fields.push({ label: "Buyer", value: str(body.buyerName) });
+      fields.push({ label: "Return date", value: str(body.returnDate) });
+      fields.push({ label: "Payment done by", value: str(body.paidBy) });
       amount = Number(body.amount);
       break;
     case "addManualLabour":

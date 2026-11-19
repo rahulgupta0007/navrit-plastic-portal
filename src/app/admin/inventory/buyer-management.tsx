@@ -19,12 +19,14 @@ export default function BuyerManagement({
 }) {
   const buyers = useMemo(() => ((data?.buyerSummary || []) as any[]).filter((b) => b.mode === mode), [data?.buyerSummary, mode]);
   const advances = useMemo(() => ((data?.buyerAdvances || []) as any[]).filter((a) => a.mode === mode), [data?.buyerAdvances, mode]);
+  const returns = useMemo(() => ((data?.buyerAdvanceReturns || []) as any[]).filter((a) => a.mode === mode), [data?.buyerAdvanceReturns, mode]);
   const sales = useMemo(() => ((data?.sales || []) as any[]).filter((s) => s.mode === mode), [data?.sales, mode]);
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [newBuyer, setNewBuyer] = useState({ name: "", phone: "", location: "", notes: "" });
   const [form, setForm] = useState({ buyerName: "", amount: "", advanceDate: today(), receivedBy: "", paymentMode: "Cash", notes: "" });
+  const [returnForm, setReturnForm] = useState({ buyerName: "", amount: "", returnDate: today(), paidBy: "", paymentMode: "Cash", notes: "" });
   const [busy, setBusy] = useState(false);
 
   const key = (name: string) => String(name || "").trim().toLowerCase();
@@ -39,7 +41,11 @@ export default function BuyerManagement({
   );
   const buyer = buyers.find((b) => key(b.name) === selected);
   const buyerAdvances = buyer ? advances.filter((a) => key(a.buyer_name) === selected) : [];
+  const buyerReturns = buyer ? returns.filter((a) => key(a.buyer_name) === selected) : [];
   const buyerSales = buyer ? sales.filter((s) => key(s.customer_name) === selected) : [];
+
+  const selectedReturnBuyer = buyers.find((b) => key(b.name) === key(returnForm.buyerName));
+  const returnMax = Number(selectedReturnBuyer?.advanceBalance || 0);
 
   async function addBuyer() {
     if (!newBuyer.name.trim()) return;
@@ -75,7 +81,42 @@ export default function BuyerManagement({
     if (ok) setForm({ ...form, buyerName: name ? form.buyerName : "", amount: "", notes: "" });
   }
 
+  async function returnAdvance() {
+    const buyerName = returnForm.buyerName.trim();
+    const amount = Number(returnForm.amount);
+    if (!buyerName || !(amount > 0) || !returnForm.paidBy) return;
+    setBusy(true);
+    const ok = await post("returnBuyerAdvance", {
+      mode,
+      buyerName,
+      amount,
+      returnDate: returnForm.returnDate,
+      paidBy: returnForm.paidBy,
+      paymentMode: returnForm.paymentMode,
+      notes: returnForm.notes,
+    });
+    setBusy(false);
+    if (ok) setReturnForm({ ...returnForm, amount: "", notes: "" });
+  }
+
+  function openReturnFor(name: string, balance: number) {
+    setReturnForm({
+      buyerName: name,
+      amount: balance > 0 ? String(balance) : "",
+      returnDate: today(),
+      paidBy: "",
+      paymentMode: "Cash",
+      notes: "",
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
   const canSave = form.buyerName.trim() && Number(form.amount) > 0 && form.receivedBy;
+  const canReturn =
+    returnForm.buyerName.trim() &&
+    Number(returnForm.amount) > 0 &&
+    returnForm.paidBy &&
+    Number(returnForm.amount) <= returnMax + 0.005;
 
   return (
     <div className="space-y-4">
@@ -85,9 +126,9 @@ export default function BuyerManagement({
           <p className="mt-1 text-2xl font-bold">{buyers.length}</p>
         </div>
         <div className="ad-card p-4">
-          <p className="ad-muted text-xs">Advance held for buyers</p>
+          <p className="ad-muted text-xs">Latest advance left</p>
           <p className="mt-1 text-2xl font-bold">{money(totals.advance)}</p>
-          <p className="ad-muted mt-1 text-xs">Adjusted automatically on the next sale to that buyer</p>
+          <p className="ad-muted mt-1 text-xs">After sales used + returns — still held for buyers</p>
         </div>
         <div className="ad-card p-4">
           <p className="ad-muted text-xs">Pending from buyers</p>
@@ -121,8 +162,7 @@ export default function BuyerManagement({
       <div className="ad-card p-4">
         <h3 className="font-semibold">Receive buyer advance</h3>
         <p className="ad-muted mb-3 text-xs">
-          Buyer pays in advance. The partner who received it holds the cash, Accounts shows it in the company book, and it is
-          adjusted when we sell to the same buyer name.
+          Buyer pays in advance. After material/sale is sent, advance left updates automatically. Use return below if you give money back.
         </p>
         <div className="grid gap-2 md:grid-cols-3">
           <div>
@@ -156,6 +196,58 @@ export default function BuyerManagement({
       </div>
 
       <div className="ad-card p-4">
+        <h3 className="font-semibold">Return buyer advance</h3>
+        <p className="ad-muted mb-3 text-xs">
+          Give leftover advance money back to the buyer. Uses latest advance left (after sales). Payment done by is required for Accounts.
+        </p>
+        <div className="grid gap-2 md:grid-cols-3">
+          <div>
+            <input
+              className="ad-input w-full"
+              list="buyer-names-return"
+              placeholder="Buyer name"
+              value={returnForm.buyerName}
+              onChange={(e) => setReturnForm({ ...returnForm, buyerName: e.target.value })}
+            />
+            <datalist id="buyer-names-return">
+              {buyers.filter((b) => Number(b.advanceBalance) > 0.005).map((b) => (
+                <option key={b.name} value={b.name} />
+              ))}
+            </datalist>
+            {returnForm.buyerName.trim() && (
+              <p className="ad-muted mt-1 text-[11px]">Latest advance left: {money(returnMax)}</p>
+            )}
+          </div>
+          <input
+            className="ad-input"
+            type="number"
+            min="0"
+            step="any"
+            placeholder="Return amount"
+            value={returnForm.amount}
+            onChange={(e) => setReturnForm({ ...returnForm, amount: e.target.value })}
+          />
+          <input
+            className="ad-input"
+            type="date"
+            value={returnForm.returnDate}
+            onChange={(e) => setReturnForm({ ...returnForm, returnDate: e.target.value })}
+          />
+          <PersonSelect value={returnForm.paidBy} onChange={(v) => setReturnForm({ ...returnForm, paidBy: v })} required />
+          <select className="ad-input" value={returnForm.paymentMode} onChange={(e) => setReturnForm({ ...returnForm, paymentMode: e.target.value })}>
+            <option>Cash</option>
+            <option>UPI</option>
+            <option>Bank Transfer</option>
+            <option>Cheque</option>
+          </select>
+          <input className="ad-input" placeholder="Notes" value={returnForm.notes} onChange={(e) => setReturnForm({ ...returnForm, notes: e.target.value })} />
+        </div>
+        <button className="ad-btn ad-btn-primary mt-3" disabled={!canReturn || busy} onClick={() => void returnAdvance()}>
+          Save advance return
+        </button>
+      </div>
+
+      <div className="ad-card p-4">
         <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
           <h3 className="font-semibold">{mode === "PET" ? "PET" : "Plastic"} buyers</h3>
           <input className="ad-input w-full sm:w-64" placeholder="Search buyer" value={search} onChange={(e) => setSearch(e.target.value)} />
@@ -174,7 +266,9 @@ export default function BuyerManagement({
                   <th>Sale value</th>
                   <th>Pending</th>
                   <th>Advance given</th>
-                  <th>Advance balance</th>
+                  <th>Used on sales</th>
+                  <th>Returned</th>
+                  <th>Advance left (latest)</th>
                   <th />
                 </tr>
               </thead>
@@ -189,13 +283,25 @@ export default function BuyerManagement({
                     <td>{money(b.totalSales)}</td>
                     <td>{money(b.pendingCredit)}</td>
                     <td>{money(b.advanceGiven)}</td>
+                    <td>{money(b.advanceUsedOnSales)}</td>
+                    <td>{money(b.advanceReturned)}</td>
                     <td>
                       <b>{money(b.advanceBalance)}</b>
                     </td>
                     <td>
-                      <button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={() => setSelected(key(b.name))}>
-                        History
-                      </button>
+                      <div className="flex flex-wrap gap-2">
+                        <button className="text-xs font-semibold text-[var(--ad-accent)]" onClick={() => setSelected(key(b.name))}>
+                          History
+                        </button>
+                        {Number(b.advanceBalance) > 0.005 && (
+                          <button
+                            className="text-xs font-semibold text-[var(--ad-accent)]"
+                            onClick={() => openReturnFor(b.name, Number(b.advanceBalance))}
+                          >
+                            Return
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -211,7 +317,7 @@ export default function BuyerManagement({
             <div>
               <h3 className="text-lg font-bold">{buyer.name}</h3>
               <p className="ad-muted text-sm">
-                Advance balance {money(buyer.advanceBalance)} · Pending {money(buyer.pendingCredit)}
+                Advance left (latest) {money(buyer.advanceBalance)} · Used on sales {money(buyer.advanceUsedOnSales)} · Returned {money(buyer.advanceReturned)} · Pending {money(buyer.pendingCredit)}
               </p>
             </div>
             <div className="flex gap-2">
@@ -223,6 +329,14 @@ export default function BuyerManagement({
                   Adjust advance against pending sales
                 </button>
               )}
+              {Number(buyer.advanceBalance) > 0.005 && (
+                <button
+                  className="ad-btn ad-btn-ghost"
+                  onClick={() => openReturnFor(buyer.name, Number(buyer.advanceBalance))}
+                >
+                  Return advance
+                </button>
+              )}
               <button className="ad-btn ad-btn-ghost" onClick={() => setSelected(null)}>
                 Close
               </button>
@@ -230,7 +344,7 @@ export default function BuyerManagement({
           </div>
 
           <div>
-            <h4 className="mb-2 text-sm font-semibold">Advances</h4>
+            <h4 className="mb-2 text-sm font-semibold">Advances received</h4>
             {buyerAdvances.length === 0 ? (
               <p className="ad-muted text-sm">No advance from this buyer.</p>
             ) : (
@@ -240,8 +354,7 @@ export default function BuyerManagement({
                     <tr>
                       <th>Date</th>
                       <th>Amount</th>
-                      <th>Used</th>
-                      <th>Left</th>
+                      <th>Used on sales</th>
                       <th>Received by</th>
                       <th>Mode</th>
                       <th>Notes</th>
@@ -254,7 +367,6 @@ export default function BuyerManagement({
                         <td>{a.advance_date}</td>
                         <td>{money(a.amount)}</td>
                         <td>{money(a.used_amount)}</td>
-                        <td>{money(Number(a.amount) - Number(a.used_amount))}</td>
                         <td>{a.received_by || "—"}</td>
                         <td>{a.payment_mode}</td>
                         <td>{a.notes || "—"}</td>
@@ -269,6 +381,49 @@ export default function BuyerManagement({
                               Delete
                             </button>
                           )}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <div>
+            <h4 className="mb-2 text-sm font-semibold">Advance returns</h4>
+            {buyerReturns.length === 0 ? (
+              <p className="ad-muted text-sm">No returns to this buyer.</p>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="ad-table">
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Amount</th>
+                      <th>Payment done by</th>
+                      <th>Mode</th>
+                      <th>Notes</th>
+                      <th />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {buyerReturns.map((r) => (
+                      <tr key={r.id}>
+                        <td>{r.return_date}</td>
+                        <td>{money(r.amount)}</td>
+                        <td>{r.paid_by || "—"}</td>
+                        <td>{r.payment_mode}</td>
+                        <td>{r.notes || "—"}</td>
+                        <td>
+                          <button
+                            className="text-xs font-semibold text-red-600"
+                            onClick={() => {
+                              if (confirm("Delete this advance return?")) post("deleteBuyerAdvanceReturn", { id: r.id });
+                            }}
+                          >
+                            Delete
+                          </button>
                         </td>
                       </tr>
                     ))}
