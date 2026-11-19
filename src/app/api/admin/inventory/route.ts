@@ -1317,15 +1317,23 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.action === "addPurchase") {
+      const purchaseItemSchema = z.object({
+        materialId: z.number().int().positive().optional(),
+        materialName: z.string().trim().min(1, "Please select a material type"),
+        materialVariant: z.string().trim().optional().default(""),
+        quantityKg: z.number({ required_error: "Please enter Quantity (kg)", invalid_type_error: "Quantity (kg) must be a valid number" }).positive("Quantity (kg) must be greater than 0"),
+        ratePerKg: z.number({ required_error: "Please enter Rate / kg", invalid_type_error: "Rate / kg must be a valid number" }).nonnegative("Rate / kg cannot be negative"),
+      });
       const s = z.object({
         mode: modeSchema,
         materialId: z.number().int().positive().optional(),
-        materialName: z.string().trim().min(1, "Please select Material (Natural or Red)"),
+        materialName: z.string().trim().optional().default(""),
         materialVariant: z.string().trim().optional().default(""),
         supplierId: z.number().int().positive().optional(),
         purchaseType: z.enum(["NORMAL", "SUPPLIER_CREDIT", "BORROWED_FUND"]),
-        quantityKg: z.number({ required_error: "Please enter Quantity (kg)", invalid_type_error: "Quantity (kg) must be a valid number" }).positive("Quantity (kg) must be greater than 0"),
-        ratePerKg: z.number({ required_error: "Please enter Rate / kg", invalid_type_error: "Rate / kg must be a valid number" }).nonnegative("Rate / kg cannot be negative"),
+        quantityKg: z.number().positive().optional(),
+        ratePerKg: z.number().nonnegative().optional(),
+        items: z.array(purchaseItemSchema).min(1).optional(),
         paidAmount: z.number({ invalid_type_error: "Paid to vendor must be a valid number" }).nonnegative("Paid to vendor cannot be negative").optional(),
         paidBy: optionalAccountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
@@ -1337,6 +1345,22 @@ export async function POST(req: NextRequest) {
         transportCharges: z.number({ invalid_type_error: "Transport must be a valid number" }).nonnegative("Transport cannot be negative").optional().default(0),
         loadingCharges: z.number({ invalid_type_error: "Loading charges must be a valid number" }).nonnegative("Loading charges cannot be negative").optional().default(0),
       }).parse(body);
+
+      const lineItems = (s.items && s.items.length
+        ? s.items
+        : (s.materialName && s.quantityKg != null && s.ratePerKg != null
+          ? [{
+              materialId: s.materialId,
+              materialName: s.materialName,
+              materialVariant: s.materialVariant || "",
+              quantityKg: s.quantityKg,
+              ratePerKg: s.ratePerKg,
+            }]
+          : []));
+      if (!lineItems.length) {
+        return NextResponse.json({ error: "Add at least one material line (type, quantity, rate)" }, { status: 400 });
+      }
+
       const paymentDoneDate = s.paymentDate || s.purchaseDate;
       const transportCharges = Math.round((s.transportCharges || 0) * 100) / 100;
       const loadingCharges = Math.round((s.loadingCharges || 0) * 100) / 100;
@@ -1356,76 +1380,140 @@ export async function POST(req: NextRequest) {
       if (s.purchaseType === "BORROWED_FUND" && !s.borrowingId) {
         return NextResponse.json({ error: "Borrowing account is required for borrowed-fund purchase" }, { status: 400 });
       }
-
-      let stockName: string;
-      try {
-        stockName = purchaseStockName(s.mode, s.materialName, s.materialVariant);
-      } catch (error) {
-        return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
+      if (s.fundingSource === "OWN_POCKET" && (s.paidAmount ?? 0) > 0 && !s.paidBy) {
+        return NextResponse.json({ error: "Payment done by is required for own-pocket payments" }, { status: 400 });
       }
-      const variant = stockName === "Red Bottles" ? "Red" : "Mixed";
 
-      // Vendor bill = material only. Transport/loading are separate payees.
-      const total = Math.round(s.quantityKg * s.ratePerKg * 100) / 100;
-      let cashPaid = s.paidAmount ?? 0;
-      if (cashPaid > total) cashPaid = total;
-      let advanceApplied=0;
-      if(s.supplierId){ const rows=sqlite.prepare("SELECT id,amount,used_amount FROM vendor_advances WHERE mode=? AND supplier_id=? AND amount-used_amount>0.005 ORDER BY advance_date ASC,id ASC").all(s.mode,s.supplierId) as Array<{id:number;amount:number;used_amount:number}>; let rem=Math.max(0,total-cashPaid); for(const a of rows){ if(rem<=0) break; const use=Math.min(a.amount-a.used_amount,rem); if(use>0){sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount+?,updated_at=? WHERE id=?").run(use,nowIso(),a.id); advanceApplied+=use; rem-=use;}} }
-      const paid=Math.round((cashPaid+advanceApplied)*100)/100;
-      const credit=Math.round((total-paid)*100)/100;
-      const landedTotal = Math.round((total + transportCharges + loadingCharges) * 100) / 100;
-      const effectiveRate = s.quantityKg > 0 ? Math.round((landedTotal / s.quantityKg) * 100) / 100 : 0;
+      const resolved: Array<{
+        materialId: number | null;
+        stockName: string;
+        variant: string;
+        quantityKg: number;
+        ratePerKg: number;
+        total: number;
+      }> = [];
+      for (const item of lineItems) {
+        let stockName: string;
+        try {
+          stockName = purchaseStockName(s.mode, item.materialName, item.materialVariant || "");
+        } catch (error) {
+          return NextResponse.json({ error: error instanceof Error ? error.message : "Invalid material variant" }, { status: 400 });
+        }
+        const quantityKg = Math.round(item.quantityKg * 1000) / 1000;
+        const ratePerKg = Math.round(item.ratePerKg * 100) / 100;
+        const total = Math.round(quantityKg * ratePerKg * 100) / 100;
+        resolved.push({
+          materialId: item.materialId ?? null,
+          stockName,
+          variant: stockName === "Red Bottles" ? "Red" : "Mixed",
+          quantityKg,
+          ratePerKg,
+          total,
+        });
+      }
 
-      const r = sqlite.prepare(`
+      const materialGrand = Math.round(resolved.reduce((n, x) => n + x.total, 0) * 100) / 100;
+      let cashRemaining = Math.min(s.paidAmount ?? 0, materialGrand);
+
+      const createdIds: number[] = [];
+      let paidGrand = 0;
+      let creditGrand = 0;
+
+      const insertPurchase = sqlite.prepare(`
         INSERT INTO purchases
         (mode, material_id, material_name, supplier_id, purchase_type, quantity_kg, rate_per_kg,
          total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, paid_by, transport_charges, weight_charges, labour_charges, material_variant, created_at, updated_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        s.mode, s.materialId ?? null, stockName, s.supplierId ?? null, s.purchaseType,
-        s.quantityKg, s.ratePerKg, total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-        s.purchaseDate, s.notes, s.paidBy ?? "", transportCharges, 0, loadingCharges, variant, nowIso(), nowIso()
-      );
-      const purchaseId = Number(r.lastInsertRowid);
-      if (s.fundingSource === "OWN_POCKET" && cashPaid > 0 && !s.paidBy) {
-        return NextResponse.json({ error: "Payment done by is required for own-pocket payments" }, { status: 400 });
-      }
-      if(cashPaid>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"PURCHASE",cashPaid,paymentDoneDate,"Cash",s.notes,s.paidBy ?? "",nowIso(),s.fundingSource);
-      if(advanceApplied>0) sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`).run(s.mode,s.supplierId,purchaseId,"CREDIT_SETTLEMENT",advanceApplied,paymentDoneDate,"Advance","Advance applied to purchase #"+purchaseId,nowIso());
-
-      syncPurchaseSideCosts({
-        mode: s.mode,
-        purchaseId,
-        transportCharges,
-        loadingCharges,
-        expenseDate: s.purchaseDate,
-        paidBy: s.paidBy ?? "",
-        fundingSource: s.fundingSource || "COMPANY",
-      });
-
-      // Stock value uses landed cost (material + transport + loading).
-      sqlite.prepare(`
+      `);
+      const insertInv = sqlite.prepare(`
         INSERT INTO inventory_transactions
         (mode, material_id, material_name, transaction_type, quantity_kg, amount, purchase_id, transaction_date, notes, created_at)
         VALUES (?, ?, ?, 'PURCHASE', ?, ?, ?, ?, ?, ?)
-      `).run(s.mode, s.materialId ?? null, stockName, s.quantityKg, landedTotal, purchaseId, s.purchaseDate, s.notes, nowIso());
+      `);
+      const insertCashPay = sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)`);
+      const insertAdvancePay = sqlite.prepare(`INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,created_at) VALUES (?,?,?,?,?,?,?,?,?)`);
+      const advanceRowsStmt = sqlite.prepare("SELECT id,amount,used_amount FROM vendor_advances WHERE mode=? AND supplier_id=? AND amount-used_amount>0.005 ORDER BY advance_date ASC,id ASC");
+      const useAdvanceStmt = sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount+?,updated_at=? WHERE id=?");
+      const supplierId = s.supplierId as number;
+      const fundingSource = s.fundingSource || "COMPANY";
 
+      for (let i = 0; i < resolved.length; i++) {
+        const line = resolved[i];
+        const lineTransport = i === 0 ? transportCharges : 0;
+        const lineLoading = i === 0 ? loadingCharges : 0;
+        let cashPaid = Math.min(cashRemaining, line.total);
+        cashRemaining = Math.round((cashRemaining - cashPaid) * 100) / 100;
+
+        let advanceApplied = 0;
+        const rows = advanceRowsStmt.all(s.mode, supplierId) as Array<{ id: number; amount: number; used_amount: number }>;
+        let rem = Math.max(0, line.total - cashPaid);
+        for (const a of rows) {
+          if (rem <= 0) break;
+          const use = Math.min(a.amount - a.used_amount, rem);
+          if (use > 0) {
+            useAdvanceStmt.run(use, nowIso(), a.id);
+            advanceApplied += use;
+            rem -= use;
+          }
+        }
+        const paid = Math.round((cashPaid + advanceApplied) * 100) / 100;
+        const credit = Math.round((line.total - paid) * 100) / 100;
+        const landedTotal = Math.round((line.total + lineTransport + lineLoading) * 100) / 100;
+        const note = resolved.length > 1
+          ? `${s.notes || ""}${s.notes ? " · " : ""}Multi-type purchase line ${i + 1}/${resolved.length}`.trim()
+          : s.notes;
+
+        const r = insertPurchase.run(
+          s.mode, line.materialId, line.stockName, supplierId, s.purchaseType,
+          line.quantityKg, line.ratePerKg, line.total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
+          s.purchaseDate, note, s.paidBy ?? "", lineTransport, 0, lineLoading, line.variant, nowIso(), nowIso()
+        );
+        const purchaseId = Number(r.lastInsertRowid);
+        createdIds.push(purchaseId);
+        paidGrand += paid;
+        creditGrand += credit;
+
+        if (cashPaid > 0) {
+          insertCashPay.run(s.mode, supplierId, purchaseId, "PURCHASE", cashPaid, paymentDoneDate, "Cash", note, s.paidBy ?? "", nowIso(), fundingSource);
+        }
+        if (advanceApplied > 0) {
+          insertAdvancePay.run(s.mode, supplierId, purchaseId, "CREDIT_SETTLEMENT", advanceApplied, paymentDoneDate, "Advance", "Advance applied to purchase #" + purchaseId, nowIso());
+        }
+
+        syncPurchaseSideCosts({
+          mode: s.mode,
+          purchaseId,
+          transportCharges: lineTransport,
+          loadingCharges: lineLoading,
+          expenseDate: s.purchaseDate,
+          paidBy: s.paidBy ?? "",
+          fundingSource,
+        });
+
+        insertInv.run(s.mode, line.materialId, line.stockName, line.quantityKg, landedTotal, purchaseId, s.purchaseDate, note, nowIso());
+      }
+
+      const firstId = createdIds[0];
       pendingEmail = {
-        purchaseId,
+        purchaseId: firstId,
         kind: "purchase",
         sendEmail: body.sendEmail !== false,
       };
+      const qtyGrand = Math.round(resolved.reduce((n, x) => n + x.quantityKg, 0) * 1000) / 1000;
+      const landedGrand = Math.round((materialGrand + transportCharges + loadingCharges) * 100) / 100;
       return json({
         ok: true,
-        id: purchaseId,
-        total,
-        paid,
-        credit,
+        id: firstId,
+        ids: createdIds,
+        count: createdIds.length,
+        total: materialGrand,
+        paid: Math.round(paidGrand * 100) / 100,
+        credit: Math.round(creditGrand * 100) / 100,
         transportCharges,
         loadingCharges,
-        landedTotal,
-        effectiveRate,
-        materialName: stockName,
+        landedTotal: landedGrand,
+        effectiveRate: qtyGrand > 0 ? Math.round((landedGrand / qtyGrand) * 100) / 100 : 0,
+        materialName: resolved.map((x) => x.stockName).join(" + "),
       });
     }
 

@@ -58,6 +58,7 @@ export default function InventoryPage() {
   const [message,setMessage] = useState("");
   const emptyPurchase = { materialId:"", materialName:"", materialVariant:"Mixed", supplierId:"", purchaseType:"NORMAL", quantityKg:"", ratePerKg:"", paidAmount:"", paidBy:"", fundingSource:"COMPANY" as FundingSource, borrowingId:"", lenderId:"", purchaseDate:new Date().toISOString().slice(0,10), paymentDate:new Date().toISOString().slice(0,10), notes:"", transportCharges:"", loadingCharges:"" };
   const [purchase,setPurchase] = useState(emptyPurchase);
+  const [purchaseItems,setPurchaseItems] = useState([{materialName:"", materialVariant:"Mixed", quantityKg:"", ratePerKg:""}]);
   const [editingPurchase,setEditingPurchase] = useState<number|null>(null);
   const [paymentEdit,setPaymentEdit] = useState<{purchaseId:number; paymentDate:string; paidBy:string} | null>(null);
   const [preStock,setPreStock] = useState({materialName:"Natural Bottles",materialVariant:"Mixed",quantityKg:"",ratePerKg:"",stockDate:"2026-09-30",notes:""});
@@ -83,6 +84,14 @@ export default function InventoryPage() {
     if (mode === "PLASTIC") {
       const first = (data?.plasticMaterialTypes || []).find((t: any) => t.active)?.name || "";
       setPurchase((p) => ({ ...p, materialName: first, materialVariant: "" }));
+      setPurchaseItems((items) => items.map((it) => {
+        const isPlastic = (data?.plasticMaterialTypes || []).some((t: any) => t.active && t.name === it.materialName);
+        return {
+          ...it,
+          materialName: isPlastic ? it.materialName : first,
+          materialVariant: "",
+        };
+      }));
       setSaleItems((items) => items.map((it) => ({
         ...it,
         materialCategory: it.materialCategory && !(it.materialCategory === "Natural Bottles" || it.materialCategory === "Red Bottles")
@@ -107,6 +116,16 @@ export default function InventoryPage() {
         ...p,
         materialName: p.materialName === "Natural Bottles" || p.materialName === "Red Bottles" ? p.materialName : "Natural Bottles",
         materialVariant: p.materialName === "Red Bottles" ? "Red" : (p.materialVariant || "Mixed"),
+      }));
+      setPurchaseItems((items) => items.map((it) => {
+        const ok = it.materialName === "Natural Bottles" || it.materialName === "Red Bottles";
+        if (ok) {
+          return {
+            ...it,
+            materialVariant: it.materialName === "Red Bottles" ? "Red" : "Mixed",
+          };
+        }
+        return { ...it, materialName: "Natural Bottles", materialVariant: "Mixed" };
       }));
       setSaleItems((items) => items.map((it) => {
         const ok = it.materialCategory === "Natural Bottles" || it.materialCategory === "Red Bottles";
@@ -246,13 +265,35 @@ export default function InventoryPage() {
     return { materialCategory: "Natural Bottles", materialVariant: "Green", quantityKg: "", ratePerKg: "" };
   }
 
+  function defaultPurchaseItem() {
+    if (mode === "PLASTIC") {
+      const first = plasticTypes[0]?.name || "";
+      return { materialName: first, materialVariant: "", quantityKg: "", ratePerKg: "" };
+    }
+    return { materialName: "Natural Bottles", materialVariant: "Mixed", quantityKg: "", ratePerKg: "" };
+  }
+
+  function resetPurchaseForm() {
+    setEditingPurchase(null);
+    setPurchase({ ...emptyPurchase });
+    setPurchaseItems([defaultPurchaseItem()]);
+  }
+
   function validatePurchaseForm() {
     if (!purchase.supplierId) return "Please select a Vendor";
-    if (!purchase.materialName) return mode==="PLASTIC" ? "Please select a Plastic material type" : "Please select Material (Natural or Red)";
-    const qty = Number(purchase.quantityKg);
-    if (!(qty > 0)) return "Please enter Quantity (kg) greater than 0";
-    const rate = Number(purchase.ratePerKg);
-    if (purchase.ratePerKg === "" || Number.isNaN(rate) || rate < 0) return "Please enter Rate / kg";
+    if (!purchaseItems.length) return "Add at least one material line";
+    for (let i = 0; i < purchaseItems.length; i++) {
+      const item = purchaseItems[i];
+      if (!item.materialName) {
+        return mode === "PLASTIC"
+          ? `Line ${i + 1}: select a Plastic material type`
+          : `Line ${i + 1}: select Material (Natural or Red)`;
+      }
+      const qty = Number(item.quantityKg);
+      if (!(qty > 0)) return `Line ${i + 1}: enter Quantity (kg) greater than 0`;
+      const rate = Number(item.ratePerKg);
+      if (item.ratePerKg === "" || Number.isNaN(rate) || rate < 0) return `Line ${i + 1}: enter Rate / kg`;
+    }
     const paid = purchase.paidAmount === "" ? 0 : Number(purchase.paidAmount);
     if (purchase.paidAmount !== "" && (Number.isNaN(paid) || paid < 0)) return "Paid to vendor must be a valid amount (0 or more)";
     const transport = purchase.transportCharges === "" ? 0 : Number(purchase.transportCharges);
@@ -265,11 +306,12 @@ export default function InventoryPage() {
     return "";
   }
 
-  const materialTotal = (Number(purchase.quantityKg) || 0) * (Number(purchase.ratePerKg) || 0);
+  const materialTotal = purchaseItems.reduce((n, x) => n + (Number(x.quantityKg) || 0) * (Number(x.ratePerKg) || 0), 0);
+  const purchaseTotalKg = purchaseItems.reduce((n, x) => n + (Number(x.quantityKg) || 0), 0);
   const transportAmt = Number(purchase.transportCharges) || 0;
   const loadingAmt = Number(purchase.loadingCharges) || 0;
   const landedTotal = materialTotal + transportAmt + loadingAmt;
-  const finalRate = (Number(purchase.quantityKg) || 0) > 0 ? landedTotal / Number(purchase.quantityKg) : 0;
+  const finalRate = purchaseTotalKg > 0 ? landedTotal / purchaseTotalKg : 0;
 
   function resetSaleForm() {
     setEditingSale(null);
@@ -457,17 +499,28 @@ export default function InventoryPage() {
     return { materialName, materialVariant: materialVariant || "Mixed" };
   }
 
+  function purchaseItemsPayload() {
+    return purchaseItems.map((x) => ({
+      materialName: String(x.materialName || "").trim(),
+      materialVariant: mode === "PLASTIC"
+        ? ""
+        : (x.materialName === "Red Bottles" ? "Red" : "Mixed"),
+      quantityKg: Number(x.quantityKg),
+      ratePerKg: Number(x.ratePerKg),
+    }));
+  }
+
   async function addPurchase() {
     const clientError = validatePurchaseForm();
     if (clientError) { setMessage(clientError); return; }
-    const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
+    const items = purchaseItemsPayload();
     const cashPaid=purchase.paidAmount===""?undefined:Number(purchase.paidAmount);
     const ok=await post("addPurchase",{
-      mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
+      mode,
+      items,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined,
-      purchaseType:purchase.purchaseType, quantityKg:Number(purchase.quantityKg),
-      ratePerKg:Number(purchase.ratePerKg), paidAmount:cashPaid, paidBy:purchase.paidBy||undefined, fundingSource:purchase.fundingSource,
+      purchaseType:purchase.purchaseType,
+      paidAmount:cashPaid, paidBy:purchase.paidBy||undefined, fundingSource:purchase.fundingSource,
       borrowingId:purchase.borrowingId?Number(purchase.borrowingId):undefined,
       lenderId:purchase.lenderId?Number(purchase.lenderId):undefined,
       purchaseDate:purchase.purchaseDate,
@@ -477,20 +530,25 @@ export default function InventoryPage() {
       loadingCharges: purchase.loadingCharges==="" ? 0 : Number(purchase.loadingCharges),
       sendEmail,
     });
-    if(ok)setPurchase({...emptyPurchase});
+    if(ok) resetPurchaseForm();
   }
 
   async function editPurchase() {
     if (editingPurchase===null) return;
     const clientError = validatePurchaseForm();
     if (clientError) { setMessage(clientError); return; }
-    const m=materials.find((x:Material)=>String(x.id)===purchase.materialId);
+    if (purchaseItems.length !== 1) {
+      setMessage("While editing, keep one material line (or cancel and add a new multi-type purchase)");
+      return;
+    }
+    const line = purchaseItemsPayload()[0];
     const cashPaid=purchase.paidAmount===""?undefined:Number(purchase.paidAmount);
     const ok=await post("updatePurchase",{
-      purchaseId:editingPurchase, mode, materialId:m?.id, materialName:purchase.materialName||m?.name_en,
-      materialVariant:purchase.materialName==="Red Bottles"?"Red":"Mixed",
+      purchaseId:editingPurchase, mode,
+      materialName: line.materialName,
+      materialVariant: line.materialVariant,
       supplierId:purchase.supplierId?Number(purchase.supplierId):undefined, purchaseType:purchase.purchaseType,
-      quantityKg:Number(purchase.quantityKg), ratePerKg:Number(purchase.ratePerKg),
+      quantityKg:line.quantityKg, ratePerKg:line.ratePerKg,
       paidAmount:cashPaid,
       paidBy:purchase.paidBy||undefined,
       fundingSource:purchase.fundingSource,
@@ -501,7 +559,7 @@ export default function InventoryPage() {
       loadingCharges: purchase.loadingCharges==="" ? 0 : Number(purchase.loadingCharges),
       sendEmail,
     });
-    if(ok){setEditingPurchase(null);setPurchase({...emptyPurchase});}
+    if(ok) resetPurchaseForm();
   }
 
   function startEditPurchase(p:Purchase) {
@@ -527,6 +585,12 @@ export default function InventoryPage() {
       transportCharges: String(p.transport_charges || ""),
       loadingCharges: String(p.labour_charges || ""),
     });
+    setPurchaseItems([{
+      materialName: parsed.materialName,
+      materialVariant: parsed.materialVariant || "Mixed",
+      quantityKg: String(p.quantity_kg),
+      ratePerKg: String(p.rate_per_kg),
+    }]);
     window.scrollTo({top:0,behavior:"smooth"});
   }
 
@@ -778,46 +842,68 @@ export default function InventoryPage() {
               ...(data.suppliers||[]).map((s:Supplier)=>({ value: String(s.id), label: s.name })),
             ]}
           />
-          {mode==="PLASTIC" ? (
-            <AdminSelect
-              label="Plastic material type"
-              required
-              placeholder="Select type"
-              value={purchase.materialName}
-              onChange={(materialName)=>setPurchase({...purchase,materialName,materialVariant:""})}
-              options={[
-                { value: "", label: "Select type" },
-                ...plasticTypes.map((t:any)=>({ value: t.name, label: t.name })),
-              ]}
-            />
-          ) : (
-            <AdminSelect
-              label="Material"
-              required
-              placeholder="Select material"
-              value={purchase.materialName}
-              onChange={(materialName)=>{
-                setPurchase({...purchase,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"});
-              }}
-              options={[
-                { value: "", label: "Select material" },
-                { value: "Natural Bottles", label: "Natural (mixed)" },
-                { value: "Red Bottles", label: "Red" },
-              ]}
-            />
-          )}
           <label className="ad-field">
             <span className="ad-field-label">Purchase date *</span>
             <input className="ad-input" type="date" value={purchase.purchaseDate} onChange={e=>setPurchase({...purchase,purchaseDate:e.target.value})}/>
           </label>
-          <label className="ad-field">
-            <span className="ad-field-label">Quantity (kg) *</span>
-            <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 100" value={purchase.quantityKg} onChange={e=>setPurchase({...purchase,quantityKg:e.target.value})}/>
-          </label>
-          <label className="ad-field">
-            <span className="ad-field-label">Rate / kg *</span>
-            <input className="ad-input" type="number" min="0" step="any" placeholder="e.g. 49" value={purchase.ratePerKg} onChange={e=>setPurchase({...purchase,ratePerKg:e.target.value})}/>
-          </label>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          <p className="text-xs font-medium ad-muted">Materials — add multiple Plastic / PET types in one purchase (same as sale)</p>
+          {purchaseItems.map((item, i) => (
+            <div key={i} className="grid gap-2 md:grid-cols-6 items-end">
+              {mode==="PLASTIC" ? (
+                <AdminSelect
+                  label={i === 0 ? "Plastic material type *" : undefined}
+                  required={i === 0}
+                  placeholder="Select type"
+                  value={item.materialName}
+                  onChange={(materialName)=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,materialName,materialVariant:""}:x))}
+                  options={[
+                    { value: "", label: "Select type" },
+                    ...plasticTypes.map((t:any)=>({ value: t.name, label: t.name })),
+                  ]}
+                />
+              ) : (
+                <AdminSelect
+                  label={i === 0 ? "Material *" : undefined}
+                  required={i === 0}
+                  placeholder="Select material"
+                  value={item.materialName}
+                  onChange={(materialName)=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,materialName,materialVariant:materialName==="Red Bottles"?"Red":"Mixed"}:x))}
+                  options={[
+                    { value: "", label: "Select material" },
+                    { value: "Natural Bottles", label: "Natural (mixed)" },
+                    { value: "Red Bottles", label: "Red" },
+                  ]}
+                />
+              )}
+              <label className="ad-field">
+                {i === 0 && <span className="ad-field-label">Quantity (kg) *</span>}
+                <input className="ad-input" type="number" min="0" step="any" placeholder="Qty kg" value={item.quantityKg} onChange={e=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,quantityKg:e.target.value}:x))}/>
+              </label>
+              <label className="ad-field">
+                {i === 0 && <span className="ad-field-label">Rate / kg *</span>}
+                <input className="ad-input" type="number" min="0" step="any" placeholder="Rate / kg" value={item.ratePerKg} onChange={e=>setPurchaseItems(purchaseItems.map((x,j)=>j===i?{...x,ratePerKg:e.target.value}:x))}/>
+              </label>
+              <div className="ad-field">
+                {i === 0 && <span className="ad-field-label">Line total</span>}
+                <div className="ad-input flex items-center text-sm font-semibold">₹{((Number(item.quantityKg)||0)*(Number(item.ratePerKg)||0)).toFixed(2)}</div>
+              </div>
+              {purchaseItems.length > 1 && !editingPurchase ? (
+                <button type="button" className="ad-btn ad-btn-ghost" onClick={()=>setPurchaseItems(purchaseItems.filter((_,j)=>j!==i))}>Remove</button>
+              ) : <span />}
+            </div>
+          ))}
+          {!editingPurchase && (
+            <button type="button" className="ad-btn ad-btn-ghost" onClick={()=>setPurchaseItems([...purchaseItems, defaultPurchaseItem()])}>+ Add Material</button>
+          )}
+          {editingPurchase && (
+            <p className="text-xs ad-muted">Editing one purchase row. To save several types together, cancel and use + Add Material on a new purchase.</p>
+          )}
+        </div>
+
+        <div className="mt-3 grid gap-3 md:grid-cols-4">
           <div className="ad-field">
             <span className="ad-field-label">Vendor material total</span>
             <div className="ad-input flex items-center text-sm font-semibold">₹{materialTotal.toFixed(2)}</div>
@@ -880,10 +966,10 @@ export default function InventoryPage() {
           </label>
           <div className="flex flex-wrap items-end gap-2 md:col-span-2">
             <button className="ad-btn ad-btn-primary" onClick={editingPurchase ? editPurchase : addPurchase}>{editingPurchase ? "Update purchase" : "Save purchase"}</button>
-            {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={()=>{setEditingPurchase(null);setPurchase({...emptyPurchase})}}>Cancel</button>}
+            {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={resetPurchaseForm}>Cancel</button>}
           </div>
         </div>
-        <p className="mt-3 text-xs ad-muted">Vendor gets <b>material cost only</b>. Transport (driver) and loading (outside labour) are separate expenses — not added to vendor bill. Final rate / kg = (material + transport + loading) ÷ kg. PDF emailed to your Gmail.</p>
+        <p className="mt-3 text-xs ad-muted">Use <b>+ Add Material</b> for several types in one go (shared vendor, date, transport, loading, payment). Each type becomes its own stock line. Vendor gets <b>material cost only</b>. Transport / loading are separate expenses. Final rate / kg = (all material + transport + loading) ÷ total kg.</p>
       </div>
 
       {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
