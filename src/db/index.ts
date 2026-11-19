@@ -707,6 +707,8 @@ function createDb() {
       vendor_name TEXT NOT NULL DEFAULT '',
       purchase_date TEXT NOT NULL,
       amount REAL NOT NULL CHECK(amount > 0),
+      paid_amount REAL NOT NULL DEFAULT 0,
+      credit_amount REAL NOT NULL DEFAULT 0,
       paid_by TEXT NOT NULL DEFAULT '',
       funding_source TEXT NOT NULL DEFAULT 'COMPANY',
       notes TEXT NOT NULL DEFAULT '',
@@ -731,6 +733,39 @@ function createDb() {
     );
     CREATE INDEX IF NOT EXISTS machine_setups_mode_date_idx ON machine_setups(mode, setup_date);
   `);
+  // Advance / partial payment on machine orders.
+  try { sqlite.exec("ALTER TABLE machines ADD COLUMN paid_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
+  try { sqlite.exec("ALTER TABLE machines ADD COLUMN credit_amount REAL NOT NULL DEFAULT 0"); } catch { /* exists */ }
+  sqlite.exec(`
+    CREATE TABLE IF NOT EXISTS machine_payments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      machine_id INTEGER NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
+      amount REAL NOT NULL CHECK(amount > 0),
+      payment_date TEXT NOT NULL,
+      paid_by TEXT NOT NULL DEFAULT '',
+      funding_source TEXT NOT NULL DEFAULT 'COMPANY',
+      notes TEXT NOT NULL DEFAULT '',
+      other_expense_id INTEGER,
+      created_at TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS machine_payments_machine_idx ON machine_payments(machine_id, payment_date);
+  `);
+  // Existing fully-paid machine rows: treat prior amount as already paid.
+  try {
+    sqlite.exec(`
+      UPDATE machines
+      SET paid_amount = amount, credit_amount = 0
+      WHERE COALESCE(paid_amount,0) = 0 AND COALESCE(credit_amount,0) = 0 AND other_expense_id IS NOT NULL
+    `);
+    sqlite.exec(`
+      INSERT INTO machine_payments (machine_id, amount, payment_date, paid_by, funding_source, notes, other_expense_id, created_at)
+      SELECT m.id, m.paid_amount, m.purchase_date, m.paid_by, m.funding_source, 'Initial payment', m.other_expense_id, m.created_at
+      FROM machines m
+      WHERE m.paid_amount > 0.005
+        AND m.other_expense_id IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM machine_payments p WHERE p.machine_id = m.id)
+    `);
+  } catch { /* ignore backfill */ }
   // Create the sale index only after the sale_id migration has run. Existing
   // production databases may have an older inventory_transactions table.
   try {

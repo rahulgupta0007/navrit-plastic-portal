@@ -90,6 +90,15 @@ function deleteLinkedExpense(expenseId: number | null | undefined) {
   sqlite.prepare("DELETE FROM other_expenses WHERE id=?").run(expenseId);
 }
 
+function moneyRound(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+function machineDesc(name: string, vendorName: string, kind: string) {
+  const base = vendorName ? `Machine: ${name} (vendor ${vendorName})` : `Machine: ${name}`;
+  return `${base} · ${kind}`;
+}
+
 export async function GET() {
   const session = await getSession();
   if (!session) return json({ error: "Unauthorized" }, 401);
@@ -112,9 +121,20 @@ export async function GET() {
        LIMIT 500`
     )
     .all();
+  const machinePayments = sqlite
+    .prepare(
+      `SELECT * FROM machine_payments ORDER BY payment_date DESC, id DESC LIMIT 1000`
+    )
+    .all();
 
-  const machineTotal = Number(
+  const machineOrderTotal = Number(
     (sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM machines").get() as { n: number })?.n || 0
+  );
+  const machinePaidTotal = Number(
+    (sqlite.prepare("SELECT COALESCE(SUM(paid_amount),0) as n FROM machines").get() as { n: number })?.n || 0
+  );
+  const machineDueTotal = Number(
+    (sqlite.prepare("SELECT COALESCE(SUM(credit_amount),0) as n FROM machines").get() as { n: number })?.n || 0
   );
   const setupTotal = Number(
     (sqlite.prepare("SELECT COALESCE(SUM(amount),0) as n FROM machine_setups").get() as { n: number })?.n || 0
@@ -123,10 +143,13 @@ export async function GET() {
   return json({
     machines,
     setups,
+    machinePayments,
     totals: {
-      machines: Math.round(machineTotal * 100) / 100,
-      setups: Math.round(setupTotal * 100) / 100,
-      all: Math.round((machineTotal + setupTotal) * 100) / 100,
+      machines: moneyRound(machineOrderTotal),
+      machinesPaid: moneyRound(machinePaidTotal),
+      machinesDue: moneyRound(machineDueTotal),
+      setups: moneyRound(setupTotal),
+      all: moneyRound(machinePaidTotal + setupTotal),
       machineCount: machines.length,
       setupCount: setups.length,
     },
@@ -150,39 +173,56 @@ export async function POST(req: NextRequest) {
           name: z.string().trim().min(1, "Machine name is required").max(120),
           vendorName: z.string().trim().optional().default(""),
           purchaseDate: dateSchema.optional().default(todayStr()),
-          amount: z.number().positive("Amount must be greater than 0"),
+          amount: z.number().positive("Order amount must be greater than 0"),
+          paidAmount: z.number().nonnegative("Paid now cannot be negative").optional().default(0),
           paidBy: optionalAccountPersonSchema,
           fundingSource: optionalFundingSourceSchema,
           notes: z.string().trim().optional().default(""),
         })
         .parse(body);
-      if (s.fundingSource === "OWN_POCKET" && !s.paidBy) {
+
+      const orderAmount = moneyRound(s.amount);
+      let paidNow = moneyRound(s.paidAmount ?? 0);
+      if (paidNow > orderAmount) paidNow = orderAmount;
+      const credit = moneyRound(orderAmount - paidNow);
+
+      if (paidNow > 0.005 && !s.paidBy) {
+        return json({ error: "Please select Payment done by when paying advance / partial / full" }, 400);
+      }
+      if (s.fundingSource === "OWN_POCKET" && paidNow > 0.005 && !s.paidBy) {
         return json({ error: "Payment done by is required for own-pocket payments" }, 400);
       }
-      const desc = s.vendorName
-        ? `Machine: ${s.name} (vendor ${s.vendorName})`
-        : `Machine: ${s.name}`;
-      const expenseId = insertLinkedExpense({
-        mode: s.mode,
-        expenseType: "Machine purchase",
-        description: desc,
-        amount: s.amount,
-        expenseDate: s.purchaseDate,
-        paidBy: s.paidBy ?? "",
-        fundingSource: s.fundingSource,
-      });
+
+      const payKind =
+        paidNow <= 0.005 ? "Order only" : paidNow + 0.005 >= orderAmount ? "Full payment" : "Advance / partial";
+
+      let expenseId: number | null = null;
+      if (paidNow > 0.005) {
+        expenseId = insertLinkedExpense({
+          mode: s.mode,
+          expenseType: "Machine purchase",
+          description: machineDesc(s.name, s.vendorName, payKind),
+          amount: paidNow,
+          expenseDate: s.purchaseDate,
+          paidBy: s.paidBy ?? "",
+          fundingSource: s.fundingSource,
+        });
+      }
+
       const r = sqlite
         .prepare(
           `INSERT INTO machines
-           (mode, name, vendor_name, purchase_date, amount, paid_by, funding_source, notes, other_expense_id, created_at, updated_at)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?)`
+           (mode, name, vendor_name, purchase_date, amount, paid_amount, credit_amount, paid_by, funding_source, notes, other_expense_id, created_at, updated_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           s.mode,
           s.name,
           s.vendorName,
           s.purchaseDate,
-          s.amount,
+          orderAmount,
+          paidNow,
+          credit,
           s.paidBy ?? "",
           s.fundingSource,
           s.notes,
@@ -190,7 +230,19 @@ export async function POST(req: NextRequest) {
           nowIso(),
           nowIso()
         );
-      return json({ ok: true, id: Number(r.lastInsertRowid) });
+      const machineId = Number(r.lastInsertRowid);
+
+      if (paidNow > 0.005 && expenseId) {
+        sqlite
+          .prepare(
+            `INSERT INTO machine_payments
+             (machine_id, amount, payment_date, paid_by, funding_source, notes, other_expense_id, created_at)
+             VALUES (?,?,?,?,?,?,?,?)`
+          )
+          .run(machineId, paidNow, s.purchaseDate, s.paidBy ?? "", s.fundingSource, payKind, expenseId, nowIso());
+      }
+
+      return json({ ok: true, id: machineId, paid: paidNow, credit, paymentKind: payKind });
     }
 
     if (action === "updateMachine") {
@@ -202,50 +254,109 @@ export async function POST(req: NextRequest) {
           vendorName: z.string().trim().optional().default(""),
           purchaseDate: dateSchema,
           amount: z.number().positive(),
+          notes: z.string().trim().optional().default(""),
+        })
+        .parse(body);
+      const existing = sqlite
+        .prepare("SELECT id, paid_amount, credit_amount FROM machines WHERE id=?")
+        .get(s.machineId) as { id: number; paid_amount: number; credit_amount: number } | undefined;
+      if (!existing) return json({ error: "Machine not found" }, 404);
+
+      const orderAmount = moneyRound(s.amount);
+      const paid = moneyRound(Number(existing.paid_amount) || 0);
+      if (orderAmount + 0.005 < paid) {
+        return json({ error: `Order amount cannot be less than already paid (${paid})` }, 400);
+      }
+      const credit = moneyRound(orderAmount - paid);
+
+      sqlite
+        .prepare(
+          `UPDATE machines
+           SET mode=?, name=?, vendor_name=?, purchase_date=?, amount=?, credit_amount=?, notes=?, updated_at=?
+           WHERE id=?`
+        )
+        .run(s.mode, s.name, s.vendorName, s.purchaseDate, orderAmount, credit, s.notes, nowIso(), s.machineId);
+      return json({ ok: true });
+    }
+
+    if (action === "payMachineBalance") {
+      const s = z
+        .object({
+          machineId: z.number().int().positive(),
+          amount: z.number().positive("Payment amount must be greater than 0"),
+          paymentDate: dateSchema.optional().default(todayStr()),
           paidBy: optionalAccountPersonSchema,
           fundingSource: optionalFundingSourceSchema,
           notes: z.string().trim().optional().default(""),
         })
         .parse(body);
+
       const existing = sqlite
-        .prepare("SELECT id, other_expense_id FROM machines WHERE id=?")
-        .get(s.machineId) as { id: number; other_expense_id: number | null } | undefined;
+        .prepare("SELECT * FROM machines WHERE id=?")
+        .get(s.machineId) as
+        | {
+            id: number;
+            mode: string;
+            name: string;
+            vendor_name: string;
+            amount: number;
+            paid_amount: number;
+            credit_amount: number;
+          }
+        | undefined;
       if (!existing) return json({ error: "Machine not found" }, 404);
+
+      const due = moneyRound(Number(existing.credit_amount) || 0);
+      if (due <= 0.005) return json({ error: "This machine order is already fully paid" }, 400);
+
+      let pay = moneyRound(s.amount);
+      if (pay > due) pay = due;
+      if (!s.paidBy) {
+        return json({ error: "Please select Payment done by for this payment" }, 400);
+      }
       if (s.fundingSource === "OWN_POCKET" && !s.paidBy) {
         return json({ error: "Payment done by is required for own-pocket payments" }, 400);
       }
-      const desc = s.vendorName
-        ? `Machine: ${s.name} (vendor ${s.vendorName})`
-        : `Machine: ${s.name}`;
-      const expenseId = updateLinkedExpense(existing.other_expense_id, {
-        mode: s.mode,
+
+      const payKind = pay + 0.005 >= due ? "Balance settlement" : "Partial payment";
+      const expenseId = insertLinkedExpense({
+        mode: existing.mode,
         expenseType: "Machine purchase",
-        description: desc,
-        amount: s.amount,
-        expenseDate: s.purchaseDate,
+        description: machineDesc(existing.name, existing.vendor_name || "", payKind),
+        amount: pay,
+        expenseDate: s.paymentDate,
         paidBy: s.paidBy ?? "",
         fundingSource: s.fundingSource,
       });
+
+      sqlite
+        .prepare(
+          `INSERT INTO machine_payments
+           (machine_id, amount, payment_date, paid_by, funding_source, notes, other_expense_id, created_at)
+           VALUES (?,?,?,?,?,?,?,?)`
+        )
+        .run(
+          s.machineId,
+          pay,
+          s.paymentDate,
+          s.paidBy ?? "",
+          s.fundingSource,
+          s.notes || payKind,
+          expenseId,
+          nowIso()
+        );
+
+      const newPaid = moneyRound(Number(existing.paid_amount) + pay);
+      const newCredit = moneyRound(Number(existing.amount) - newPaid);
       sqlite
         .prepare(
           `UPDATE machines
-           SET mode=?, name=?, vendor_name=?, purchase_date=?, amount=?, paid_by=?, funding_source=?, notes=?, other_expense_id=?, updated_at=?
+           SET paid_amount=?, credit_amount=?, paid_by=?, funding_source=?, other_expense_id=COALESCE(other_expense_id, ?), updated_at=?
            WHERE id=?`
         )
-        .run(
-          s.mode,
-          s.name,
-          s.vendorName,
-          s.purchaseDate,
-          s.amount,
-          s.paidBy ?? "",
-          s.fundingSource,
-          s.notes,
-          expenseId,
-          nowIso(),
-          s.machineId
-        );
-      return json({ ok: true });
+        .run(newPaid, newCredit, s.paidBy ?? "", s.fundingSource, expenseId, nowIso(), s.machineId);
+
+      return json({ ok: true, paid: newPaid, credit: newCredit });
     }
 
     if (action === "deleteMachine") {
@@ -254,9 +365,21 @@ export async function POST(req: NextRequest) {
         .prepare("SELECT id, other_expense_id FROM machines WHERE id=?")
         .get(s.machineId) as { id: number; other_expense_id: number | null } | undefined;
       if (!existing) return json({ error: "Machine not found" }, 404);
+
+      const pays = sqlite
+        .prepare("SELECT other_expense_id FROM machine_payments WHERE machine_id=?")
+        .all(s.machineId) as Array<{ other_expense_id: number | null }>;
       sqlite.prepare("UPDATE machine_setups SET machine_id=NULL WHERE machine_id=?").run(s.machineId);
+      sqlite.prepare("DELETE FROM machine_payments WHERE machine_id=?").run(s.machineId);
       sqlite.prepare("DELETE FROM machines WHERE id=?").run(s.machineId);
-      deleteLinkedExpense(existing.other_expense_id);
+
+      const expenseIds = new Set<number>();
+      if (existing.other_expense_id) expenseIds.add(existing.other_expense_id);
+      for (const p of pays) {
+        if (p.other_expense_id) expenseIds.add(p.other_expense_id);
+      }
+      for (const id of expenseIds) deleteLinkedExpense(id);
+
       return json({ ok: true });
     }
 

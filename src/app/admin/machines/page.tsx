@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, Wallet } from "lucide-react";
 import { AdminShell } from "@/components/admin-shell";
 import { AdminSelect } from "@/components/admin-select";
 import { FundingSelect } from "@/components/funding-select";
@@ -17,6 +17,8 @@ type Machine = {
   vendor_name: string;
   purchase_date: string;
   amount: number;
+  paid_amount: number;
+  credit_amount: number;
   paid_by: string;
   funding_source: string;
   notes: string;
@@ -41,6 +43,7 @@ const emptyMachine = {
   vendorName: "",
   purchaseDate: new Date().toISOString().slice(0, 10),
   amount: "",
+  paidAmount: "",
   paidBy: "",
   fundingSource: "COMPANY" as FundingSource,
   notes: "",
@@ -61,6 +64,15 @@ function money(n: number) {
   return `₹${Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
+function paymentStatus(m: Machine) {
+  const order = Number(m.amount) || 0;
+  const paid = Number(m.paid_amount) || 0;
+  const due = Number(m.credit_amount) || Math.max(0, order - paid);
+  if (due <= 0.005) return { label: "PAID", due: 0, className: "ad-status-paid" };
+  if (paid <= 0.005) return { label: "ORDER / UNPAID", due, className: "ad-status-unpaid" };
+  return { label: "PARTIAL", due, className: "ad-status-unpaid" };
+}
+
 export default function MachinesPage() {
   const { mode } = useBusinessMode();
   const [data, setData] = useState<any>(null);
@@ -70,6 +82,15 @@ export default function MachinesPage() {
   const [setup, setSetup] = useState(emptySetup);
   const [editingMachine, setEditingMachine] = useState<number | null>(null);
   const [editingSetup, setEditingSetup] = useState<number | null>(null);
+  const [payForm, setPayForm] = useState<{
+    machineId: number;
+    name: string;
+    due: number;
+    amount: string;
+    paymentDate: string;
+    paidBy: string;
+    fundingSource: FundingSource;
+  } | null>(null);
 
   async function load() {
     const r = await fetch("/api/admin/machines", { cache: "no-store" });
@@ -85,7 +106,6 @@ export default function MachinesPage() {
   }, []);
 
   useEffect(() => {
-    // Default new rows to current business mode when not editing.
     if (editingMachine === null) {
       setMachine((m) => ({ ...m, mode: mode === "PET" || mode === "PLASTIC" ? mode : "SHARED" }));
     }
@@ -112,7 +132,15 @@ export default function MachinesPage() {
 
   const machines: Machine[] = useMemo(() => data?.machines || [], [data?.machines]);
   const setups: Setup[] = useMemo(() => data?.setups || [], [data?.setups]);
-  const totals = data?.totals || { machines: 0, setups: 0, all: 0, machineCount: 0, setupCount: 0 };
+  const totals = data?.totals || {
+    machines: 0,
+    machinesPaid: 0,
+    machinesDue: 0,
+    setups: 0,
+    all: 0,
+    machineCount: 0,
+    setupCount: 0,
+  };
 
   const machineOptions = useMemo(
     () => [
@@ -121,6 +149,10 @@ export default function MachinesPage() {
     ],
     [machines]
   );
+
+  const orderAmt = Number(machine.amount) || 0;
+  const paidNowAmt = machine.paidAmount === "" ? 0 : Number(machine.paidAmount) || 0;
+  const dueNow = Math.max(0, orderAmt - Math.min(orderAmt, paidNowAmt));
 
   function resetMachineForm() {
     setEditingMachine(null);
@@ -145,26 +177,51 @@ export default function MachinesPage() {
     }
     const amount = Number(machine.amount);
     if (!(amount > 0)) {
-      setMessage("Enter a valid purchase amount");
+      setMessage("Enter order / machine amount");
       return;
     }
-    if (machine.fundingSource === "OWN_POCKET" && !machine.paidBy) {
+    if (editingMachine) {
+      const ok = await post("updateMachine", {
+        machineId: editingMachine,
+        mode: machine.mode,
+        name: machine.name.trim(),
+        vendorName: machine.vendorName.trim(),
+        purchaseDate: machine.purchaseDate,
+        amount,
+        notes: machine.notes,
+      });
+      if (ok) resetMachineForm();
+      return;
+    }
+
+    const paidAmount = machine.paidAmount === "" ? 0 : Number(machine.paidAmount);
+    if (Number.isNaN(paidAmount) || paidAmount < 0) {
+      setMessage("Paid now must be 0 or more");
+      return;
+    }
+    if (paidAmount > amount) {
+      setMessage("Paid now cannot exceed order amount");
+      return;
+    }
+    if (paidAmount > 0 && !machine.paidBy) {
+      setMessage("Select Payment done by for advance / partial / full payment");
+      return;
+    }
+    if (machine.fundingSource === "OWN_POCKET" && paidAmount > 0 && !machine.paidBy) {
       setMessage("Select Payment done by for own-pocket payment");
       return;
     }
-    const payload = {
+    const ok = await post("addMachine", {
       mode: machine.mode,
       name: machine.name.trim(),
       vendorName: machine.vendorName.trim(),
       purchaseDate: machine.purchaseDate,
       amount,
+      paidAmount,
       paidBy: machine.paidBy || undefined,
       fundingSource: machine.fundingSource,
       notes: machine.notes,
-    };
-    const ok = editingMachine
-      ? await post("updateMachine", { machineId: editingMachine, ...payload })
-      : await post("addMachine", payload);
+    });
     if (ok) resetMachineForm();
   }
 
@@ -206,10 +263,12 @@ export default function MachinesPage() {
       vendorName: m.vendor_name || "",
       purchaseDate: m.purchase_date,
       amount: String(m.amount),
+      paidAmount: String(m.paid_amount ?? ""),
       paidBy: m.paid_by || "",
       fundingSource: (m.funding_source as FundingSource) || "COMPANY",
       notes: m.notes || "",
     });
+    setPayForm(null);
     setTab("machines");
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
@@ -230,15 +289,54 @@ export default function MachinesPage() {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
+  function openPayDue(m: Machine) {
+    const due = Number(m.credit_amount) || Math.max(0, Number(m.amount) - Number(m.paid_amount || 0));
+    setPayForm({
+      machineId: m.id,
+      name: m.name,
+      due,
+      amount: String(due),
+      paymentDate: new Date().toISOString().slice(0, 10),
+      paidBy: "",
+      fundingSource: "COMPANY",
+    });
+    setEditingMachine(null);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function submitPayDue() {
+    if (!payForm) return;
+    const amount = Number(payForm.amount);
+    if (!(amount > 0)) {
+      setMessage("Enter payment amount");
+      return;
+    }
+    if (!payForm.paidBy) {
+      setMessage("Select Payment done by");
+      return;
+    }
+    const ok = await post("payMachineBalance", {
+      machineId: payForm.machineId,
+      amount,
+      paymentDate: payForm.paymentDate,
+      paidBy: payForm.paidBy,
+      fundingSource: payForm.fundingSource,
+    });
+    if (ok) setPayForm(null);
+  }
+
   async function deleteMachine(m: Machine) {
-    const yes = window.confirm(`Delete machine "${m.name}" (₹${Number(m.amount).toFixed(2)})? This also removes it from the cash book.`);
+    const yes = window.confirm(
+      `Delete machine "${m.name}" (order ${money(m.amount)})? This also removes linked payments from the cash book.`
+    );
     if (!yes) return;
     const ok = await post("deleteMachine", { machineId: m.id });
     if (ok && editingMachine === m.id) resetMachineForm();
+    if (ok && payForm?.machineId === m.id) setPayForm(null);
   }
 
   async function deleteSetup(s: Setup) {
-    const yes = window.confirm(`Delete setup "${s.title}" (₹${Number(s.amount).toFixed(2)})? This also removes it from the cash book.`);
+    const yes = window.confirm(`Delete setup "${s.title}" (${money(s.amount)})? This also removes it from the cash book.`);
     if (!yes) return;
     const ok = await post("deleteSetup", { setupId: s.id });
     if (ok && editingSetup === s.id) resetSetupForm();
@@ -255,25 +353,30 @@ export default function MachinesPage() {
   return (
     <AdminShell
       title="Machine & Setup"
-      subtitle="Buy new machines and record factory / installation setup costs. Amounts hit Accounts cash book like expenses."
+      subtitle="Buy machines with full / advance / partial payment, then clear balance later. Only paid amounts hit the cash book."
     >
       {message && <div className="mb-4 text-xs text-[var(--ad-accent)]">{message}</div>}
 
-      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+      <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <div className="ad-card p-4">
-          <p className="ad-muted text-xs">Machines bought</p>
+          <p className="ad-muted text-xs">Machines ordered</p>
           <p className="mt-1 text-2xl font-bold">{totals.machineCount}</p>
-          <p className="ad-muted mt-1 text-xs">{money(totals.machines)}</p>
+          <p className="ad-muted mt-1 text-xs">Order value {money(totals.machines)}</p>
+        </div>
+        <div className="ad-card p-4">
+          <p className="ad-muted text-xs">Paid on machines</p>
+          <p className="mt-1 text-2xl font-bold">{money(totals.machinesPaid || 0)}</p>
+          <p className="ad-muted mt-1 text-xs">In cash book</p>
+        </div>
+        <div className="ad-card p-4">
+          <p className="ad-muted text-xs">Machine dues</p>
+          <p className="mt-1 text-2xl font-bold">{money(totals.machinesDue || 0)}</p>
+          <p className="ad-muted mt-1 text-xs">Still to pay vendor</p>
         </div>
         <div className="ad-card p-4">
           <p className="ad-muted text-xs">Setup spend</p>
-          <p className="mt-1 text-2xl font-bold">{totals.setupCount}</p>
-          <p className="ad-muted mt-1 text-xs">{money(totals.setups)}</p>
-        </div>
-        <div className="ad-card p-4">
-          <p className="ad-muted text-xs">Total capital outlay</p>
-          <p className="mt-1 text-2xl font-bold">{money(totals.all)}</p>
-          <p className="ad-muted mt-1 text-xs">Company / partner pocket as chosen</p>
+          <p className="mt-1 text-2xl font-bold">{money(totals.setups)}</p>
+          <p className="ad-muted mt-1 text-xs">{totals.setupCount} entries</p>
         </div>
       </div>
 
@@ -305,7 +408,7 @@ export default function MachinesPage() {
                 <span className="ad-field-label">Machine name *</span>
                 <input
                   className="ad-input"
-                  placeholder="e.g. PET crusher, Plastic extruder"
+                  placeholder="e.g. Plastic grinder machine"
                   value={machine.name}
                   onChange={(e) => setMachine({ ...machine, name: e.target.value })}
                 />
@@ -330,7 +433,7 @@ export default function MachinesPage() {
                 ]}
               />
               <label className="ad-field">
-                <span className="ad-field-label">Purchase date *</span>
+                <span className="ad-field-label">Order / purchase date *</span>
                 <input
                   className="ad-input"
                   type="date"
@@ -339,22 +442,42 @@ export default function MachinesPage() {
                 />
               </label>
               <label className="ad-field">
-                <span className="ad-field-label">Amount *</span>
+                <span className="ad-field-label">Order amount *</span>
                 <input
                   className="ad-input"
                   type="number"
                   min="0"
                   step="any"
-                  placeholder="Purchase amount"
+                  placeholder="Full machine price"
                   value={machine.amount}
                   onChange={(e) => setMachine({ ...machine, amount: e.target.value })}
                 />
               </label>
-              <PersonSelect value={machine.paidBy} onChange={(v) => setMachine({ ...machine, paidBy: v })} />
-              <FundingSelect
-                value={machine.fundingSource}
-                onChange={(v) => setMachine({ ...machine, fundingSource: v })}
-              />
+              {!editingMachine && (
+                <>
+                  <label className="ad-field">
+                    <span className="ad-field-label">Paid now (advance / partial)</span>
+                    <input
+                      className="ad-input"
+                      type="number"
+                      min="0"
+                      step="any"
+                      placeholder="0 = order only / pay later"
+                      value={machine.paidAmount}
+                      onChange={(e) => setMachine({ ...machine, paidAmount: e.target.value })}
+                    />
+                  </label>
+                  <div className="ad-field">
+                    <span className="ad-field-label">Balance due</span>
+                    <div className="ad-input flex items-center text-sm font-semibold">{money(dueNow)}</div>
+                  </div>
+                  <PersonSelect value={machine.paidBy} onChange={(v) => setMachine({ ...machine, paidBy: v })} />
+                  <FundingSelect
+                    value={machine.fundingSource}
+                    onChange={(v) => setMachine({ ...machine, fundingSource: v })}
+                  />
+                </>
+              )}
               <label className="ad-field md:col-span-2">
                 <span className="ad-field-label">Notes</span>
                 <input
@@ -376,9 +499,56 @@ export default function MachinesPage() {
               </div>
             </div>
             <p className="mt-3 text-xs ad-muted">
-              Saved amount goes to Accounts cash book as <b>Machine purchase</b>. Use Payment done by so partner balances stay correct.
+              <b>Order amount</b> = full machine price.
+              <b> Paid now</b> = advance / partial / full (0 to book order only).
+              Only paid money hits Accounts. Use <b>Pay due</b> later for remaining balance.
             </p>
           </div>
+
+          {payForm && (
+            <div className="ad-card border border-[var(--ad-accent)] p-4 ad-fade-in">
+              <h3 className="mb-1 text-sm font-semibold">Pay machine balance — {payForm.name}</h3>
+              <p className="ad-muted mb-3 text-xs">Due {money(payForm.due)}. Enter advance / partial / full settlement.</p>
+              <div className="grid gap-3 md:grid-cols-5">
+                <label className="ad-field">
+                  <span className="ad-field-label">Pay amount</span>
+                  <input
+                    className="ad-input"
+                    type="number"
+                    min="0"
+                    step="any"
+                    value={payForm.amount}
+                    onChange={(e) => setPayForm({ ...payForm, amount: e.target.value })}
+                  />
+                </label>
+                <label className="ad-field">
+                  <span className="ad-field-label">Payment date</span>
+                  <input
+                    className="ad-input"
+                    type="date"
+                    value={payForm.paymentDate}
+                    onChange={(e) => setPayForm({ ...payForm, paymentDate: e.target.value })}
+                  />
+                </label>
+                <PersonSelect
+                  value={payForm.paidBy}
+                  onChange={(v) => setPayForm({ ...payForm, paidBy: v })}
+                />
+                <FundingSelect
+                  value={payForm.fundingSource}
+                  onChange={(v) => setPayForm({ ...payForm, fundingSource: v })}
+                />
+                <div className="flex flex-wrap items-end gap-2">
+                  <button type="button" className="ad-btn ad-btn-primary" onClick={() => void submitPayDue()}>
+                    Save payment
+                  </button>
+                  <button type="button" className="ad-btn ad-btn-ghost" onClick={() => setPayForm(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           <div className="ad-table-wrap">
             <table className="ad-table">
@@ -388,41 +558,60 @@ export default function MachinesPage() {
                   <th>Machine</th>
                   <th>Vendor</th>
                   <th>Line</th>
-                  <th>Amount</th>
+                  <th>Order</th>
+                  <th>Paid</th>
+                  <th>Due</th>
+                  <th>Status</th>
                   <th>By</th>
-                  <th>Fund</th>
                   <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {machines.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="ad-muted">
+                    <td colSpan={10} className="ad-muted">
                       No machines yet — add the first purchase above.
                     </td>
                   </tr>
                 )}
-                {machines.map((m) => (
-                  <tr key={m.id}>
-                    <td>{m.purchase_date}</td>
-                    <td>{m.name}</td>
-                    <td>{m.vendor_name || "—"}</td>
-                    <td>{m.mode}</td>
-                    <td>{money(m.amount)}</td>
-                    <td>{m.paid_by || "—"}</td>
-                    <td>{m.funding_source === "OWN_POCKET" ? "Own pocket" : "Company"}</td>
-                    <td>
-                      <div className="ad-row-actions">
-                        <button type="button" className="ad-icon-btn ad-icon-btn-accent" onClick={() => startEditMachine(m)}>
-                          <Pencil size={13} /> Edit
-                        </button>
-                        <button type="button" className="ad-icon-btn ad-icon-btn-danger" onClick={() => void deleteMachine(m)}>
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {machines.map((m) => {
+                  const status = paymentStatus(m);
+                  return (
+                    <tr key={m.id}>
+                      <td>{m.purchase_date}</td>
+                      <td>{m.name}</td>
+                      <td>{m.vendor_name || "—"}</td>
+                      <td>{m.mode}</td>
+                      <td>{money(m.amount)}</td>
+                      <td>{money(m.paid_amount || 0)}</td>
+                      <td>{money(status.due)}</td>
+                      <td>
+                        <span className={status.className}>{status.label}</span>
+                      </td>
+                      <td>{m.paid_by || "—"}</td>
+                      <td>
+                        <div className="ad-row-actions">
+                          {status.due > 0.005 && (
+                            <button
+                              type="button"
+                              className="ad-icon-btn ad-icon-btn-accent"
+                              onClick={() => openPayDue(m)}
+                              title="Pay advance / balance"
+                            >
+                              <Wallet size={13} /> Pay due
+                            </button>
+                          )}
+                          <button type="button" className="ad-icon-btn ad-icon-btn-accent" onClick={() => startEditMachine(m)}>
+                            <Pencil size={13} /> Edit
+                          </button>
+                          <button type="button" className="ad-icon-btn ad-icon-btn-danger" onClick={() => void deleteMachine(m)}>
+                            <Trash2 size={13} /> Delete
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
