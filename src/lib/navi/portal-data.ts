@@ -51,6 +51,7 @@ export function getCompanyOverview() {
 export function getCashAndPartners() {
   const saleCash = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM sale_payments WHERE COALESCE(payment_mode,'')<>'Advance'");
   const buyerAdv = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advances");
+  const buyerAdvReturns = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advance_returns");
   const partnerAdv = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM partner_advances");
   const vendorPaid = sumSql(`
     SELECT COALESCE(SUM(amount),0) as n FROM vendor_payments
@@ -66,7 +67,7 @@ export function getCashAndPartners() {
   const partnerSettled = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM partner_settlements");
   const borrowed = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM borrowings");
   const repaid = sumSql("SELECT COALESCE(SUM(amount),0) as n FROM borrowing_repayments");
-  const book = money(saleCash + buyerAdv + partnerAdv - vendorPaid - expenses - labourCash - partnerSettled + borrowed - repaid);
+  const book = money(saleCash + buyerAdv + partnerAdv - buyerAdvReturns - vendorPaid - expenses - labourCash - partnerSettled + borrowed - repaid);
 
   const partners = ACCOUNT_PERSONS.map((person) => {
     const received = sumSql(
@@ -259,7 +260,8 @@ export function getBuyersAndVendors() {
   const vendors = sqlite.prepare(`
     SELECT id, name, phone, location FROM suppliers ORDER BY name COLLATE NOCASE LIMIT 100
   `).all();
-  const buyerAdvances = sumSql("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances");
+  const buyerAdvances = sumSql("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM buyer_advances")
+    - sumSql("SELECT COALESCE(SUM(amount),0) as n FROM buyer_advance_returns");
   const vendorAdvances = sumSql("SELECT COALESCE(SUM(amount-used_amount),0) as n FROM vendor_advances");
   return {
     buyers,
