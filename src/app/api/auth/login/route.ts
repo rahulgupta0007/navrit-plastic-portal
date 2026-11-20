@@ -2,10 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import bcrypt from "bcryptjs";
 import { createHash, timingSafeEqual } from "crypto";
 import { z } from "zod";
-import { openDemoSqlite, sqlite } from "@/db";
+import { sqlite } from "@/db";
 import { createSession, type SessionRole } from "@/lib/auth";
-import { enterDbScope } from "@/lib/db-context";
-import { ensureDemoBusinessData, isDemoCredentials, DEMO_USERNAME } from "@/lib/demo-data";
 
 export const dynamic = "force-dynamic";
 
@@ -89,44 +87,34 @@ export async function POST(req: NextRequest) {
   } else if (envCredsMatch(username, password, readonlyUser, readonlyPass)) {
     role = "readonly";
     sessionUser = readonlyUser!;
-  } else if (isDemoCredentials(username, password)) {
-    // Built-in showcase login — isolated demo DB only (never touches live ledgers).
-    role = "readonly";
-    sessionUser = DEMO_USERNAME;
-    try {
-      enterDbScope("demo");
-      ensureDemoBusinessData(openDemoSqlite());
-    } catch {
-      /* demo seed is best-effort */
-    }
   }
 
   if (role) {
     clearFailures(key);
     await createSession(sessionUser, role);
-    return NextResponse.json({
-      ok: true,
-      role,
-      demo: sessionUser === DEMO_USERNAME,
-    });
+    return NextResponse.json({ ok: true, role });
   }
 
-  // Production-style: when admin env creds exist, do not fall through to DB users.
-  if (adminUser && adminPass) {
-    recordFailure(key);
-    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  // DB users: always allow the single view-only account; allow DB admin only when
+  // ADMIN_* env is not set (local seed path).
+  try {
+    sqlite.exec("ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'");
+  } catch {
+    /* exists */
   }
-
   const admin = sqlite
-    .prepare(`SELECT username, password_hash FROM admins WHERE username = ?`)
-    .get(username) as { username: string; password_hash: string } | undefined;
+    .prepare(`SELECT username, password_hash, COALESCE(role,'admin') as role FROM admins WHERE lower(username)=lower(?)`)
+    .get(username) as { username: string; password_hash: string; role: string } | undefined;
 
-  if (!admin || !(await bcrypt.compare(password, admin.password_hash))) {
-    recordFailure(key);
-    return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
+  if (admin && (await bcrypt.compare(password, admin.password_hash))) {
+    const dbRole: SessionRole = admin.role === "readonly" ? "readonly" : "admin";
+    if (dbRole === "readonly" || !(adminUser && adminPass)) {
+      clearFailures(key);
+      await createSession(admin.username, dbRole);
+      return NextResponse.json({ ok: true, role: dbRole });
+    }
   }
 
-  clearFailures(key);
-  await createSession(admin.username, "admin");
-  return NextResponse.json({ ok: true, role: "admin" as const });
+  recordFailure(key);
+  return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
 }

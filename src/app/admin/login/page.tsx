@@ -97,8 +97,8 @@ export default function AdminLoginPage() {
             <h2 className="font-display text-3xl text-[#042821] sm:text-4xl">{dict.login}</h2>
             <p className="mt-2 text-sm text-[#1a2e2a]">{dict.loginSubtitle}</p>
             <p className="mt-2 text-xs text-[#042821]/55">
-              Admin = full access. View-only login (if configured) can browse data but cannot change
-              anything.
+              Admin = full access. View-only user <code className="font-semibold">viewer</code> (if
+              created by admin under Backup) can browse ledgers but cannot change anything.
             </p>
 
             <label className="mt-8 block text-sm font-medium text-[#042821]">

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AdminShell, adminToast } from "@/components/admin-shell";
 import {
   Download,
+  Eye,
   HardDrive,
   Package,
   RefreshCw,
@@ -53,10 +54,20 @@ type Status = {
   };
 };
 
+type ViewerStatus = {
+  username: string;
+  dbConfigured: boolean;
+  envConfigured: boolean;
+  ready: boolean;
+};
+
 export default function AdminBackupPage() {
   const [backups, setBackups] = useState<BackupRow[]>([]);
   const [packs, setPacks] = useState<PackRow[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
+  const [viewer, setViewer] = useState<ViewerStatus | null>(null);
+  const [viewerPassword, setViewerPassword] = useState("");
+  const [viewerPassword2, setViewerPassword2] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [confirmText, setConfirmText] = useState("");
@@ -75,6 +86,7 @@ export default function AdminBackupPage() {
     setBackups(data.backups || []);
     setPacks(data.migrationPacks || []);
     setStatus(data.status || null);
+    setViewer(data.viewer || null);
     setLoading(false);
   }, []);
 
@@ -96,6 +108,33 @@ export default function AdminBackupPage() {
       return;
     }
     adminToast(`Backup saved · ${data.backup.filename}`);
+    load();
+  }
+
+  async function saveViewerPassword() {
+    if (viewerPassword.length < 6) {
+      adminToast("Viewer password must be at least 6 characters");
+      return;
+    }
+    if (viewerPassword !== viewerPassword2) {
+      adminToast("Passwords do not match");
+      return;
+    }
+    setBusy(true);
+    const res = await fetch("/api/admin/backup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "setViewerPassword", password: viewerPassword }),
+    });
+    setBusy(false);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      adminToast(data.error || "Could not save viewer password");
+      return;
+    }
+    setViewerPassword("");
+    setViewerPassword2("");
+    adminToast(data.message || `Viewer "${data.username}" ready`);
     load();
   }
 
@@ -308,6 +347,54 @@ export default function AdminBackupPage() {
           </p>
           <p className="mt-1 text-sm">Last 30 DB snapshots</p>
           <p className="mt-1 text-xs text-[var(--ad-muted)]">Migration zips kept on volume</p>
+        </div>
+      </div>
+
+      <div className="ad-card mb-4 border border-[var(--ad-accent)]/40 p-4">
+        <p className="inline-flex items-center gap-2 font-semibold text-[var(--ad-text)]">
+          <Eye size={16} className="text-[var(--ad-accent)]" />
+          View-only login (one user)
+        </p>
+        <p className="mt-2 text-sm text-[var(--ad-muted)]">
+          Create one account that can <strong className="text-[var(--ad-text)]">only browse</strong>{" "}
+          ledgers and reports — no save, edit, delete, or backup. Username is fixed as{" "}
+          <code className="text-[var(--ad-accent)]">{viewer?.username || "viewer"}</code>.
+        </p>
+        <p className="mt-2 text-xs text-[var(--ad-muted)]">
+          Status:{" "}
+          {viewer?.ready ? (
+            <span className="font-semibold text-emerald-400">Ready to log in</span>
+          ) : (
+            <span className="font-semibold text-amber-400">Set a password below to enable</span>
+          )}
+          {viewer?.envConfigured ? " · also set via Railway env" : ""}
+          {viewer?.dbConfigured ? " · saved in database" : ""}
+        </p>
+        <div className="mt-3 grid gap-2 sm:grid-cols-3">
+          <input
+            className="ad-input"
+            type="password"
+            autoComplete="new-password"
+            placeholder="New viewer password"
+            value={viewerPassword}
+            onChange={(e) => setViewerPassword(e.target.value)}
+          />
+          <input
+            className="ad-input"
+            type="password"
+            autoComplete="new-password"
+            placeholder="Confirm password"
+            value={viewerPassword2}
+            onChange={(e) => setViewerPassword2(e.target.value)}
+          />
+          <button
+            type="button"
+            className="ad-btn ad-btn-primary"
+            disabled={busy || !viewerPassword}
+            onClick={saveViewerPassword}
+          >
+            {viewer?.dbConfigured ? "Update viewer password" : "Create view-only user"}
+          </button>
         </div>
       </div>
 

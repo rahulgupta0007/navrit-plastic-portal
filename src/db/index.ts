@@ -88,6 +88,7 @@ function createDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'admin' CHECK(role IN ('admin','readonly')),
       created_at TEXT NOT NULL
     );
     CREATE TABLE IF NOT EXISTS categories (
@@ -830,6 +831,32 @@ function createDb() {
       WHERE sale_id IS NULL AND transaction_type = 'ADJUSTMENT' AND notes LIKE 'SALE #%'`);
   } catch { /* legacy rows may not exist */ }
   seedSiteContent(sqlite);
+  try { sqlite.exec("ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'"); } catch { /* exists */ }
+  // Sync optional env view-only user into admins (non-blocking).
+  try {
+    // Dynamic import avoids circular init during cold start in edge cases.
+    const pass = process.env.READONLY_PASSWORD;
+    const user = (process.env.READONLY_USERNAME || "viewer").trim();
+    if (pass && pass.trim() && user) {
+      // Lazy require so bcrypt is only pulled when needed.
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const bcrypt = require("bcryptjs") as typeof import("bcryptjs");
+      const hash = bcrypt.hashSync(pass, 10);
+      const now = new Date().toISOString();
+      const existing = sqlite.prepare("SELECT id FROM admins WHERE lower(username)=lower(?)").get(user) as
+        | { id: number }
+        | undefined;
+      if (existing) {
+        sqlite.prepare("UPDATE admins SET password_hash=?, role='readonly' WHERE id=?").run(hash, existing.id);
+      } else {
+        sqlite.prepare("INSERT INTO admins (username, password_hash, created_at, role) VALUES (?,?,?,'readonly')")
+          .run(user, hash, now);
+      }
+      console.info(`[navrit] View-only user ready: ${user}`);
+    }
+  } catch (error) {
+    console.warn("[navrit] View-only user sync skipped", error);
+  }
   // One-time cleanup of Demo* sample rows that leaked into the live ledger.
   // Real vendors/workers/purchases are not matched by these patterns.
   try {
