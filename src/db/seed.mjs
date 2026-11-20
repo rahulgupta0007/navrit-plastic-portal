@@ -88,15 +88,36 @@ const MATERIAL_SEED = [
 ];
 
 async function seed() {
+  try {
+    sqlite.exec("ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'");
+  } catch {
+    /* exists */
+  }
+
   const adminCount = sqlite.prepare("SELECT count(*) as c FROM admins").get().c;
   if (adminCount === 0) {
     const username = process.env.ADMIN_USERNAME || "admin";
     const password = process.env.ADMIN_PASSWORD || "admin123";
     const passwordHash = await bcrypt.hash(password, 10);
     sqlite
-      .prepare("INSERT INTO admins (username, password_hash, created_at) VALUES (?, ?, ?)")
+      .prepare("INSERT INTO admins (username, password_hash, created_at, role) VALUES (?, ?, ?, 'admin')")
       .run(username, passwordHash, now());
     console.log(`Admin created: ${username}`);
+  }
+
+  const viewerUser = (process.env.READONLY_USERNAME || "viewer").trim();
+  const viewerPass = process.env.READONLY_PASSWORD;
+  if (viewerPass && viewerPass.trim()) {
+    const passwordHash = await bcrypt.hash(viewerPass, 10);
+    const existing = sqlite.prepare("SELECT id FROM admins WHERE lower(username)=lower(?)").get(viewerUser);
+    if (existing) {
+      sqlite.prepare("UPDATE admins SET password_hash=?, role='readonly' WHERE id=?").run(passwordHash, existing.id);
+    } else {
+      sqlite
+        .prepare("INSERT INTO admins (username, password_hash, created_at, role) VALUES (?, ?, ?, 'readonly')")
+        .run(viewerUser, passwordHash, now());
+    }
+    console.log(`View-only user ready: ${viewerUser}`);
   }
 
   const catCount = sqlite.prepare("SELECT count(*) as c FROM categories").get().c;
