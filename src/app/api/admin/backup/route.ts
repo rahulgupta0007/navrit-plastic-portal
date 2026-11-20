@@ -19,6 +19,7 @@ import {
   envSnapshotToDotEnv,
   buildEnvSnapshot,
 } from "@/lib/migration-pack";
+import { getViewerStatus, setViewerPassword } from "@/lib/viewer-user";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -104,6 +105,7 @@ export async function GET(req: NextRequest) {
     backups,
     migrationPacks: listMigrationPacks(),
     status: getMigrationStatus(),
+    viewer: getViewerStatus(),
   });
 }
 
@@ -169,6 +171,23 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json().catch(() => ({}));
+
+  if (body?.action === "setViewerPassword") {
+    try {
+      const password = String(body.password || "");
+      const result = await setViewerPassword(password);
+      return NextResponse.json({
+        ok: true,
+        ...result,
+        message: `View-only user "${result.username}" ready — they can log in and browse only.`,
+      });
+    } catch (e) {
+      return NextResponse.json(
+        { error: e instanceof Error ? e.message : "Could not set viewer password" },
+        { status: 400 }
+      );
+    }
+  }
 
   if (body?.action === "restore") {
     try {

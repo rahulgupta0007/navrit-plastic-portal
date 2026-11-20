@@ -576,3 +576,17 @@
   border-left: 1px solid var(--ad-border);
   box-shadow: var(--ad-shadow);
 }
+
+/* View-only: disable write actions; filters/search still work */
+.admin-app[data-readonly="1"] .ad-btn-primary,
+.admin-app[data-readonly="1"] button.ad-btn-primary {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
+
+.admin-app[data-readonly="1"] form .ad-btn:not(.ad-btn-ghost) {
+  opacity: 0.45;
+  pointer-events: none;
+  cursor: not-allowed;
+}
