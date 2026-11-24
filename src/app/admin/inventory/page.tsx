@@ -21,6 +21,7 @@ type Purchase = {
   landed_total?:number;
   supplierName?:string; lenderName?:string; purchase_date:string; payment_date?:string;
   paid_by?:string; payment_done_by?:string;
+  purchase_group?:string;
 };
 type Borrowing = {
   id:number; mode:Mode; lenderName:string; amount:number; outstanding_amount:number;
@@ -65,7 +66,7 @@ export default function InventoryPage() {
   const [showPreStock,setShowPreStock] = useState(false);
   const [showPlasticTypes,setShowPlasticTypes] = useState(false);
   const [adjust,setAdjust] = useState({materialId:"",materialName:"",quantityKg:"",amount:"",notes:""});
-  const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource; paymentDate:string} | null>(null);
+  const [creditPay,setCreditPay] = useState<{purchaseId:number; amount:string; paidBy:string; fundingSource:FundingSource; paymentDate:string; payGroup?:boolean; tripLabel?:string} | null>(null);
   const [salePay,setSalePay] = useState<{saleId:number; amount:string; receivedBy:string; paymentMode:string} | null>(null);
   const [plasticTypeName,setPlasticTypeName] = useState("");
   const [plasticTypeNotes,setPlasticTypeNotes] = useState("");
@@ -465,8 +466,25 @@ export default function InventoryPage() {
     if(ok) setSalePay(null);
   }
 
+  function tripMates(p: Purchase): Purchase[] {
+    const g = String(p.purchase_group || "");
+    if (!g) return [p];
+    const rows = filteredPurchases.filter((x: Purchase) => String(x.purchase_group || "") === g);
+    return rows.length ? rows : [p];
+  }
+
   function openCreditPayment(p:Purchase) {
-    setCreditPay({purchaseId:p.id, amount:String(p.credit_amount??""), paidBy:"", fundingSource:"COMPANY", paymentDate:new Date().toISOString().slice(0,10)});
+    const mates = tripMates(p);
+    const credit = Math.round(mates.reduce((n: number, x: Purchase) => n + Number(x.credit_amount || 0), 0) * 100) / 100;
+    setCreditPay({
+      purchaseId:p.id,
+      amount:String(credit || p.credit_amount || ""),
+      paidBy:"",
+      fundingSource:"COMPANY",
+      paymentDate:new Date().toISOString().slice(0,10),
+      payGroup:mates.length > 1,
+      tripLabel:mates.map((x: Purchase) => x.material_name).join(" + "),
+    });
   }
 
   async function submitCreditPayment() {
@@ -482,6 +500,7 @@ export default function InventoryPage() {
       paidBy:creditPay.paidBy,
       fundingSource:creditPay.fundingSource,
       paymentDate:creditPay.paymentDate,
+      payGroup:Boolean(creditPay.payGroup),
       sendEmail,
     });
     if(ok) setCreditPay(null);
@@ -568,6 +587,9 @@ export default function InventoryPage() {
     setEditingPurchase(p.id);
     const parsed = purchaseCategoryAndVariant(p.material_name, (p as Purchase & {material_variant?:string}).material_variant);
     const payDate = p.payment_date || p.purchase_date;
+    const mates = tripMates(p);
+    const tripTransport = mates.reduce((n: number, x: Purchase) => n + Number(x.transport_charges || 0), 0);
+    const tripLoading = mates.reduce((n: number, x: Purchase) => n + Number(x.labour_charges || 0), 0);
     setPurchase({
       materialId:"",
       materialName:parsed.materialName,
@@ -584,8 +606,8 @@ export default function InventoryPage() {
       purchaseDate:p.purchase_date,
       paymentDate:payDate,
       notes:"",
-      transportCharges: String(p.transport_charges || ""),
-      loadingCharges: String(p.labour_charges || ""),
+      transportCharges: String(mates.length > 1 ? tripTransport : (p.transport_charges || "")),
+      loadingCharges: String(mates.length > 1 ? tripLoading : (p.labour_charges || "")),
     });
     setPurchaseItems([{
       materialName: parsed.materialName,
@@ -971,7 +993,7 @@ export default function InventoryPage() {
             {editingPurchase&&<button className="ad-btn ad-btn-ghost" onClick={resetPurchaseForm}>Cancel</button>}
           </div>
         </div>
-        <p className="mt-3 text-xs ad-muted">Use <b>+ Add Material</b> for several types in one go (shared vendor, date, transport, loading, payment). Each type becomes its own stock line. Vendor gets <b>material cost only</b>. Transport / loading are separate expenses. Final rate / kg = (all material + transport + loading) ÷ total kg.</p>
+        <p className="mt-3 text-xs ad-muted">Use <b>+ Add Material</b> for several types in one go (shared vendor, date, transport, loading, payment). Each type stays its own stock line with its own kg and vendor rate. Transport and loading are for the <b>whole trip</b> and are split by weight in the background, so final ₹/kg on each line includes its share. One <b>Pay trip</b> settles every line together.</p>
       </div>
 
       {paymentEdit && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
@@ -991,8 +1013,8 @@ export default function InventoryPage() {
       </div>}
 
       {creditPay && <div className="ad-card p-4 border border-[var(--ad-accent)] ad-fade-in">
-        <h3 className="mb-1 text-sm font-semibold">Pay vendor later — purchase #{creditPay.purchaseId}</h3>
-        <p className="ad-muted mb-3 text-xs">Use when payment is made after cash comes into company. Payment done by is required for Accounts.</p>
+        <h3 className="mb-1 text-sm font-semibold">{creditPay.payGroup ? "Pay this trip once" : `Pay vendor later — purchase #${creditPay.purchaseId}`}</h3>
+        <p className="ad-muted mb-3 text-xs">{creditPay.payGroup ? `One payment covers every material in this purchase (${creditPay.tripLabel}). It is split across those lines in the background.` : "Use when payment is made after cash comes into company. Payment done by is required for Accounts."}</p>
         <div className="grid gap-3 md:grid-cols-6">
           <label className="ad-field">
             <span className="ad-field-label">Amount</span>
@@ -1016,6 +1038,10 @@ export default function InventoryPage() {
           const payDate=p.payment_date|| (Number(p.paid_amount)>0 ? p.purchase_date : "");
           const payer=p.payment_done_by||p.paid_by||"—";
           const paid=Number(p.paid_amount)>0;
+          const mates=tripMates(p);
+          const payHead=mates.find((x: Purchase)=>Number(x.credit_amount)>0.004);
+          const showPay=Boolean(payHead && payHead.id===p.id);
+          const tripCredit=Math.round(mates.reduce((n: number, x: Purchase)=>n+Number(x.credit_amount||0),0)*100)/100;
           return <tr key={p.id}>
             <td>{p.purchase_date}</td>
             <td>{payDate||"—"}</td>
@@ -1041,9 +1067,9 @@ export default function InventoryPage() {
                     <CalendarClock size={13} /> Pay date
                   </button>
                 )}
-                {p.credit_amount>0 && (
-                  <button type="button" className="ad-icon-btn ad-icon-btn-accent" onClick={()=>openCreditPayment(p)} title="Pay remaining credit">
-                    <Wallet size={13} /> Pay
+                {showPay && (
+                  <button type="button" className="ad-icon-btn ad-icon-btn-accent" onClick={()=>openCreditPayment(p)} title={mates.length>1?"Pay the whole trip once":"Pay remaining credit"}>
+                    <Wallet size={13} /> {mates.length>1?`Pay trip ₹${tripCredit}`:"Pay"}
                   </button>
                 )}
                 <button type="button" className="ad-icon-btn" onClick={()=>void resendPurchaseEmail(p.id)} title="Resend PDF to Gmail">

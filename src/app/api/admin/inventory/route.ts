@@ -133,6 +133,25 @@ function isNaturalStockName(materialName: string) {
 }
 
 /** Transport (driver) + Loading (outside labour) — not paid to vendor; hits company cash via other_expenses. */
+/** Split a trip total across lines by kg. Last line takes the rounding remainder. */
+function allocateByWeight(total: number, weights: number[]) {
+  const sum = weights.reduce((n, w) => n + Number(w || 0), 0);
+  const clean = Math.round(Math.max(0, total) * 100) / 100;
+  if (!(clean > 0.004) || !(sum > 0) || !weights.length) return weights.map(() => 0);
+  const out: number[] = [];
+  let used = 0;
+  for (let i = 0; i < weights.length; i++) {
+    if (i === weights.length - 1) {
+      out.push(Math.max(0, Math.round((clean - used) * 100) / 100));
+    } else {
+      const share = Math.round((clean * (Number(weights[i]) / sum)) * 100) / 100;
+      out.push(share);
+      used = Math.round((used + share) * 100) / 100;
+    }
+  }
+  return out;
+}
+
 function syncPurchaseSideCosts(opts: {
   mode: string;
   purchaseId: number;
@@ -1524,8 +1543,8 @@ export async function POST(req: NextRequest) {
       const insertPurchase = sqlite.prepare(`
         INSERT INTO purchases
         (mode, material_id, material_name, supplier_id, purchase_type, quantity_kg, rate_per_kg,
-         total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, paid_by, transport_charges, weight_charges, labour_charges, material_variant, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         total_amount, paid_amount, credit_amount, lender_id, borrowing_id, purchase_date, notes, paid_by, transport_charges, weight_charges, labour_charges, material_variant, purchase_group, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const insertInv = sqlite.prepare(`
         INSERT INTO inventory_transactions
@@ -1538,11 +1557,16 @@ export async function POST(req: NextRequest) {
       const useAdvanceStmt = sqlite.prepare("UPDATE vendor_advances SET used_amount=used_amount+?,updated_at=? WHERE id=?");
       const supplierId = s.supplierId as number;
       const fundingSource = s.fundingSource || "COMPANY";
+      const purchaseGroup = resolved.length > 1 ? `pg-${Date.now().toString(36)}-${supplierId}` : "";
+      const weights = resolved.map((x) => x.quantityKg);
+      const transportShares = allocateByWeight(transportCharges, weights);
+      const loadingShares = allocateByWeight(loadingCharges, weights);
 
       for (let i = 0; i < resolved.length; i++) {
         const line = resolved[i];
-        const lineTransport = i === 0 ? transportCharges : 0;
-        const lineLoading = i === 0 ? loadingCharges : 0;
+        // One driver + one loading for the whole trip — share by kg, not dumped on one type.
+        const lineTransport = transportShares[i] || 0;
+        const lineLoading = loadingShares[i] || 0;
         const cashPaid = Math.min(cashRemaining, line.total);
         cashRemaining = Math.round((cashRemaining - cashPaid) * 100) / 100;
 
@@ -1568,7 +1592,7 @@ export async function POST(req: NextRequest) {
         const r = insertPurchase.run(
           s.mode, line.materialId, line.stockName, supplierId, s.purchaseType,
           line.quantityKg, line.ratePerKg, line.total, paid, credit, s.lenderId ?? null, s.borrowingId ?? null,
-          s.purchaseDate, note, s.paidBy ?? "", lineTransport, 0, lineLoading, line.variant, nowIso(), nowIso()
+          s.purchaseDate, note, s.paidBy ?? "", lineTransport, 0, lineLoading, line.variant, purchaseGroup, nowIso(), nowIso()
         );
         const purchaseId = Number(r.lastInsertRowid);
         createdIds.push(purchaseId);
@@ -1714,15 +1738,42 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      syncPurchaseSideCosts({
-        mode: s.mode,
-        purchaseId: s.purchaseId,
-        transportCharges,
-        loadingCharges,
-        expenseDate: s.purchaseDate,
-        paidBy,
-        fundingSource: funding,
-      });
+      const groupKey = String((sqlite.prepare("SELECT COALESCE(purchase_group,'') as g FROM purchases WHERE id=?").get(s.purchaseId) as { g: string } | undefined)?.g || "");
+      const members = groupKey
+        ? sqlite.prepare("SELECT id, quantity_kg FROM purchases WHERE purchase_group=? ORDER BY id").all(groupKey) as Array<{ id: number; quantity_kg: number }>
+        : [];
+      if (members.length > 1) {
+        // Edited transport/loading is the whole-trip total — split by kg onto every material line.
+        const tShares = allocateByWeight(transportCharges, members.map((m) => Number(m.quantity_kg)));
+        const lShares = allocateByWeight(loadingCharges, members.map((m) => Number(m.quantity_kg)));
+        members.forEach((m, i) => {
+          const lineT = tShares[i] || 0;
+          const lineL = lShares[i] || 0;
+          sqlite.prepare("UPDATE purchases SET transport_charges=?, labour_charges=?, updated_at=? WHERE id=?").run(lineT, lineL, nowIso(), m.id);
+          const mat = sqlite.prepare("SELECT total_amount FROM purchases WHERE id=?").get(m.id) as { total_amount: number };
+          const landed = Math.round((Number(mat.total_amount) + lineT + lineL) * 100) / 100;
+          sqlite.prepare("UPDATE inventory_transactions SET amount=? WHERE purchase_id=? AND transaction_type='PURCHASE'").run(landed, m.id);
+          syncPurchaseSideCosts({
+            mode: s.mode,
+            purchaseId: m.id,
+            transportCharges: lineT,
+            loadingCharges: lineL,
+            expenseDate: s.purchaseDate,
+            paidBy,
+            fundingSource: funding,
+          });
+        });
+      } else {
+        syncPurchaseSideCosts({
+          mode: s.mode,
+          purchaseId: s.purchaseId,
+          transportCharges,
+          loadingCharges,
+          expenseDate: s.purchaseDate,
+          paidBy,
+          fundingSource: funding,
+        });
+      }
 
       // Purchase edits (esp. Natural → Red corrections) use ending-balance check so
       // earlier Red sales don't block fixing a mis-tagged purchase date/type.
@@ -1908,14 +1959,26 @@ export async function POST(req: NextRequest) {
         paymentDate: dateSchema.optional().default(todayStr()),
         paidBy: accountPersonSchema,
         fundingSource: optionalFundingSourceSchema,
+        payGroup: z.boolean().optional().default(false),
       }).parse(body);
-      const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number } | undefined;
+      const p = sqlite.prepare("SELECT credit_amount, mode, supplier_id, COALESCE(purchase_group,'') as purchase_group FROM purchases WHERE id=?").get(s.purchaseId) as { credit_amount:number; mode:string; supplier_id:number; purchase_group:string } | undefined;
       if (!p) return NextResponse.json({ error: "Purchase not found" }, { status: 404 });
-      if (s.amount > p.credit_amount + 0.005) return NextResponse.json({ error: "Payment exceeds outstanding credit" }, { status: 400 });
-      sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-?, updated_at=? WHERE id=?")
-        .run(s.amount, s.amount, nowIso(), s.purchaseId);
-      sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
-        .run(p.mode,p.supplier_id,s.purchaseId,"CREDIT_SETTLEMENT",s.amount,s.paymentDate,"Cash","Vendor payment (later)",s.paidBy,nowIso(),s.fundingSource);
+      const targets = (s.payGroup && p.purchase_group)
+        ? sqlite.prepare("SELECT id, credit_amount FROM purchases WHERE purchase_group=? AND credit_amount>0.004 ORDER BY id").all(p.purchase_group) as Array<{ id: number; credit_amount: number }>
+        : [{ id: s.purchaseId, credit_amount: Number(p.credit_amount) }];
+      const outstanding = Math.round(targets.reduce((n, row) => n + Number(row.credit_amount), 0) * 100) / 100;
+      if (s.amount > outstanding + 0.005) return NextResponse.json({ error: "Payment exceeds outstanding credit" }, { status: 400 });
+      let rem = Math.round(s.amount * 100) / 100;
+      for (const row of targets) {
+        if (rem <= 0.004) break;
+        const use = Math.round(Math.min(rem, Number(row.credit_amount)) * 100) / 100;
+        if (use <= 0) continue;
+        sqlite.prepare("UPDATE purchases SET paid_amount=paid_amount+?, credit_amount=credit_amount-?, updated_at=? WHERE id=?")
+          .run(use, use, nowIso(), row.id);
+        sqlite.prepare("INSERT INTO vendor_payments (mode,supplier_id,purchase_id,payment_type,amount,payment_date,payment_mode,notes,paid_by,created_at,funding_source) VALUES (?,?,?,?,?,?,?,?,?,?,?)")
+          .run(p.mode, p.supplier_id, row.id, "CREDIT_SETTLEMENT", use, s.paymentDate, "Cash", s.payGroup ? "Vendor payment for whole trip" : "Vendor payment (later)", s.paidBy, nowIso(), s.fundingSource);
+        rem = Math.round((rem - use) * 100) / 100;
+      }
       pendingEmail = {
         purchaseId: s.purchaseId,
         kind: "vendor_payment",
@@ -1925,10 +1988,10 @@ export async function POST(req: NextRequest) {
           paymentDate: s.paymentDate,
           paymentMode: "Cash",
           paidBy: s.paidBy,
-          notes: "Vendor payment (later)",
+          notes: s.payGroup ? "Vendor payment for whole trip" : "Vendor payment (later)",
         },
       };
-      return json({ ok: true });
+      return json({ ok: true, applied: Math.round((s.amount - rem) * 100) / 100, lines: targets.length });
     }
 
 
