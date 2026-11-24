@@ -238,10 +238,12 @@ function createDb() {
       borrowing_id INTEGER REFERENCES borrowings(id),
       purchase_date TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
+      purchase_group TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS purchases_mode_date_idx ON purchases(mode, purchase_date);
+    CREATE INDEX IF NOT EXISTS purchases_group_idx ON purchases(purchase_group);
     CREATE TABLE IF NOT EXISTS sales (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
@@ -434,6 +436,7 @@ function createDb() {
     "ALTER TABLE purchases ADD COLUMN transport_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN weight_charges REAL NOT NULL DEFAULT 0",
     "ALTER TABLE purchases ADD COLUMN labour_charges REAL NOT NULL DEFAULT 0",
+    "ALTER TABLE purchases ADD COLUMN purchase_group TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE vendor_payments ADD COLUMN paid_by TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE inventory_transactions ADD COLUMN sale_id INTEGER REFERENCES sales(id) ON DELETE CASCADE",
     "ALTER TABLE other_expenses ADD COLUMN expense_frequency TEXT NOT NULL DEFAULT 'ONE_TIME'",
@@ -830,6 +833,88 @@ function createDb() {
       SET sale_id = CAST(substr(notes, 7) AS INTEGER)
       WHERE sale_id IS NULL AND transaction_type = 'ADJUSTMENT' AND notes LIKE 'SALE #%'`);
   } catch { /* legacy rows may not exist */ }
+  // Multi-type purchases used to dump all transport/loading on the first line.
+  // Re-share those trip costs by kg and tag the lines as one purchase group.
+  try {
+    sqlite.exec("CREATE INDEX IF NOT EXISTS purchases_group_idx ON purchases(purchase_group)");
+    const pending = sqlite.prepare(`
+      SELECT id, mode, supplier_id, purchase_date, created_at, quantity_kg, total_amount,
+             COALESCE(transport_charges,0) as transport_charges,
+             COALESCE(labour_charges,0) as labour_charges,
+             COALESCE(paid_by,'') as paid_by, notes
+      FROM purchases
+      WHERE notes LIKE '%Multi-type purchase line%' AND COALESCE(purchase_group,'')=''
+      ORDER BY id
+    `).all() as Array<{
+      id: number; mode: string; supplier_id: number | null; purchase_date: string; created_at: string;
+      quantity_kg: number; total_amount: number; transport_charges: number; labour_charges: number;
+      paid_by: string; notes: string;
+    }>;
+    const used = new Set<number>();
+    const parseLine = (notes: string) => {
+      const m = String(notes || "").match(/Multi-type purchase line (\d+)\/(\d+)/);
+      return m ? { i: Number(m[1]), n: Number(m[2]) } : null;
+    };
+    for (const row of pending) {
+      if (used.has(row.id)) continue;
+      const meta = parseLine(row.notes);
+      if (!meta) continue;
+      const t0 = Date.parse(row.created_at);
+      const cluster = pending.filter((r) => {
+        if (used.has(r.id)) return false;
+        const p = parseLine(r.notes);
+        if (!p || p.n !== meta.n) return false;
+        if (r.mode !== row.mode || r.supplier_id !== row.supplier_id || r.purchase_date !== row.purchase_date) return false;
+        return Math.abs(Date.parse(r.created_at) - t0) < 20000;
+      }).sort((a, b) => a.id - b.id);
+      if (cluster.length !== meta.n) continue;
+      const weight = cluster.reduce((n, r) => n + Number(r.quantity_kg), 0);
+      const transport = Math.round(cluster.reduce((n, r) => n + Number(r.transport_charges), 0) * 100) / 100;
+      const loading = Math.round(cluster.reduce((n, r) => n + Number(r.labour_charges), 0) * 100) / 100;
+      const group = `pg-fix-${cluster[0].id}`;
+      let usedT = 0;
+      let usedL = 0;
+      cluster.forEach((r, idx) => {
+        const last = idx === cluster.length - 1;
+        const lineT = last ? Math.round((transport - usedT) * 100) / 100 : Math.round((weight > 0 ? transport * Number(r.quantity_kg) / weight : 0) * 100) / 100;
+        const lineL = last ? Math.round((loading - usedL) * 100) / 100 : Math.round((weight > 0 ? loading * Number(r.quantity_kg) / weight : 0) * 100) / 100;
+        usedT = Math.round((usedT + lineT) * 100) / 100;
+        usedL = Math.round((usedL + lineL) * 100) / 100;
+        sqlite.prepare("UPDATE purchases SET transport_charges=?, labour_charges=?, purchase_group=? WHERE id=?")
+          .run(Math.max(0, lineT), Math.max(0, lineL), group, r.id);
+        const landed = Math.round((Number(r.total_amount) + Math.max(0, lineT) + Math.max(0, lineL)) * 100) / 100;
+        sqlite.prepare("UPDATE inventory_transactions SET amount=? WHERE purchase_id=? AND transaction_type='PURCHASE'")
+          .run(landed, r.id);
+        used.add(r.id);
+      });
+      const sample = sqlite.prepare(`
+        SELECT expense_date, paid_by, funding_source FROM other_expenses
+        WHERE purchase_id IN (${cluster.map(() => "?").join(",")}) AND expense_type IN ('Transport','Loading')
+        LIMIT 1
+      `).get(...cluster.map((r) => r.id)) as { expense_date: string; paid_by: string; funding_source: string } | undefined;
+      sqlite.prepare(`
+        DELETE FROM other_expenses
+        WHERE purchase_id IN (${cluster.map(() => "?").join(",")}) AND expense_type IN ('Transport','Loading')
+      `).run(...cluster.map((r) => r.id));
+      const insertExp = sqlite.prepare(`
+        INSERT INTO other_expenses
+        (mode,purchase_id,sale_id,expense_type,description,amount,expense_date,expense_frequency,paid_by,created_at,billing_month,billing_start_date,billing_end_date,funding_source)
+        VALUES (?,?,NULL,?,?,?,?,'ONE_TIME',?,?,?,?,?,?)
+      `);
+      const fresh = sqlite.prepare(`SELECT id, transport_charges, labour_charges FROM purchases WHERE purchase_group=? ORDER BY id`).all(group) as Array<{ id: number; transport_charges: number; labour_charges: number }>;
+      const now = new Date().toISOString();
+      for (const r of fresh) {
+        if (Number(r.transport_charges) > 0.004) {
+          insertExp.run(row.mode, r.id, "Transport", `Driver / transport for purchase #${r.id}`, r.transport_charges, sample?.expense_date || row.purchase_date, sample?.paid_by || row.paid_by || "", now, "", "", "", sample?.funding_source || "COMPANY");
+        }
+        if (Number(r.labour_charges) > 0.004) {
+          insertExp.run(row.mode, r.id, "Loading", `Outside loading labour for purchase #${r.id}`, r.labour_charges, sample?.expense_date || row.purchase_date, sample?.paid_by || row.paid_by || "", now, "", "", "", sample?.funding_source || "COMPANY");
+        }
+      }
+    }
+  } catch (error) {
+    console.warn("[navrit] Multi-purchase transport split skipped", error);
+  }
   seedSiteContent(sqlite);
   try { sqlite.exec("ALTER TABLE admins ADD COLUMN role TEXT NOT NULL DEFAULT 'admin'"); } catch { /* exists */ }
   // Sync optional env view-only user into admins (non-blocking).
