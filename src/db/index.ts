@@ -243,7 +243,6 @@ function createDb() {
       updated_at TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS purchases_mode_date_idx ON purchases(mode, purchase_date);
-    CREATE INDEX IF NOT EXISTS purchases_group_idx ON purchases(purchase_group);
     CREATE TABLE IF NOT EXISTS sales (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       mode TEXT NOT NULL CHECK(mode IN ('PET','PLASTIC')),
