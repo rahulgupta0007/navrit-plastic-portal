@@ -29,8 +29,6 @@ import {
   Receipt,
   Boxes,
   Landmark,
-  BookOpen,
-  ChevronDown,
 } from "lucide-react";
 import { NaviFloat } from "@/components/navi-float";
 import { NaviNavIcon } from "@/components/navi-logo";
@@ -120,8 +118,10 @@ export function AdminShell({
   const [role, setRole] = useState<"admin" | "readonly">("admin");
 
   const owner = sessionUser || process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
-  const [booksOpen, setBooksOpen] = useState(false);
+  const [toolSpace, setToolSpace] = useState<"v2" | "old">("v2");
   const isV2Page = pathname.startsWith(BUSINESS_HOME);
+  const isToolPage = toolsNav.some((t) => isActive(pathname, t.href));
+  const space: "v2" | "old" = isV2Page ? "v2" : isToolPage ? toolSpace : "old";
   const bookNav = previousBooksNav[mode];
   const tools = useMemo(
     () => (canWrite ? toolsNav : toolsNav.filter((n) => n.href !== "/admin/backup")),
@@ -131,8 +131,19 @@ export function AdminShell({
     () => [...v2Nav, ...bookNav, ...tools],
     [bookNav, tools]
   );
-  const onPreviousBook = !isV2Page && bookNav.some((n) => isActive(pathname, n.href));
-  const previousBooksVisible = booksOpen || onPreviousBook;
+  const onPreviousBook = space === "old";
+
+  useEffect(() => {
+    if (isV2Page) {
+      setToolSpace("v2");
+      localStorage.setItem("navrit-space", "v2");
+    } else if (!isToolPage) {
+      setToolSpace("old");
+      localStorage.setItem("navrit-space", "old");
+    } else {
+      setToolSpace(localStorage.getItem("navrit-space") === "old" ? "old" : "v2");
+    }
+  }, [isV2Page, isToolPage]);
 
   useEffect(() => {
     const saved = localStorage.getItem("navrit-admin-theme");
@@ -258,46 +269,60 @@ export function AdminShell({
     );
     return (
       <div className="space-y-4">
-        <div className="space-y-0.5">
-          <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-accent)]">
-            NAVRIT 2.0
-          </p>
-          {v2Nav.map(link)}
-        </div>
-        <div className="space-y-0.5">
-          <button
-            type="button"
-            onClick={() => setBooksOpen((o) => !o)}
-            className="flex w-full items-center gap-2 px-3 pb-1 text-left text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]"
+        <div className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--ad-border)] p-1 text-[11px] font-bold">
+          <Link
+            href={BUSINESS_HOME}
+            onClick={onNavigate}
+            className={clsx(
+              "rounded-lg px-2 py-2 text-center",
+              space === "v2" ? "bg-[var(--ad-accent)] text-[#052e16]" : "text-[var(--ad-muted)] hover:text-[var(--ad-text)]"
+            )}
           >
-            <BookOpen size={12} />
-            <span className="flex-1">Previous Books</span>
-            <ChevronDown
-              size={12}
-              className={clsx("transition-transform", previousBooksVisible && "rotate-180")}
-            />
-          </button>
-          {previousBooksVisible && (
-            <>
-              <div className="mx-3 mb-1 flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
-                {(["PET", "PLASTIC"] as const).map((m) => (
-                  <button
-                    key={m}
-                    type="button"
-                    onClick={() => setMode(m)}
-                    className={clsx(
-                      "flex-1 px-2 py-1.5",
-                      mode === m && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"
-                    )}
-                  >
-                    {m === "PET" ? "PET book" : "Plastic book"}
-                  </button>
-                ))}
-              </div>
-              {bookNav.map(link)}
-            </>
-          )}
+            NAVRIT 2.0
+          </Link>
+          <Link
+            href="/admin"
+            onClick={onNavigate}
+            className={clsx(
+              "rounded-lg px-2 py-2 text-center",
+              space === "old" ? "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]" : "text-[var(--ad-muted)] hover:text-[var(--ad-text)]"
+            )}
+          >
+            Previous Books
+          </Link>
         </div>
+
+        {space === "v2" ? (
+          <div className="space-y-0.5">
+            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-accent)]">
+              New book - fresh start
+            </p>
+            {v2Nav.map(link)}
+          </div>
+        ) : (
+          <div className="space-y-0.5">
+            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
+              Old PET and Plastic data
+            </p>
+            <div className="mx-3 mb-1 flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
+              {(["PET", "PLASTIC"] as const).map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  onClick={() => setMode(m)}
+                  className={clsx(
+                    "flex-1 px-2 py-1.5",
+                    mode === m && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"
+                  )}
+                >
+                  {m === "PET" ? "PET book" : "Plastic book"}
+                </button>
+              ))}
+            </div>
+            {bookNav.map(link)}
+          </div>
+        )}
+
         <div className="space-y-0.5">
           <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
             Tools
@@ -375,9 +400,13 @@ export function AdminShell({
                   {role === "readonly" ? "View" : "Admin"} /{" "}
                   <span className="text-[var(--ad-text)]">{crumbs}</span>
                 </p>
-                {onPreviousBook && (
+                {onPreviousBook ? (
                   <p className="mt-0.5 inline-flex rounded bg-[var(--ad-accent-dim)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ad-accent)]">
                     Previous Book - {mode === "PET" ? "PET" : "Plastic"}
+                  </p>
+                ) : (
+                  <p className="mt-0.5 inline-flex rounded bg-[var(--ad-accent)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#052e16]">
+                    NAVRIT 2.0
                   </p>
                 )}
               </div>

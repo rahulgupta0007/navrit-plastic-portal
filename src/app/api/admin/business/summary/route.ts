@@ -1,8 +1,8 @@
 import { readRoute } from "@/lib/business/http";
-import { getLegacyTotals, getSummary } from "@/lib/business/engine";
+import { getSummary } from "@/lib/business/engine";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
-  return readRoute(() => ({ ...getSummary(), legacy: getLegacyTotals() }));
+  return readRoute(() => getSummary());
 }

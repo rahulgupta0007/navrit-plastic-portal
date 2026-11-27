@@ -66,7 +66,7 @@ export default function AdminBackupPage() {
   const [packs, setPacks] = useState<PackRow[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
   const [viewer, setViewer] = useState<ViewerStatus | null>(null);
-  const [legacySnapshots, setLegacySnapshots] = useState<Array<{ filename: string; createdAt: string }>>([]);
+  const [navrit2, setNavrit2] = useState<{ file: string; backups: Array<{ filename: string; createdAt: string }> } | null>(null);
   const [viewerPassword, setViewerPassword] = useState("");
   const [viewerPassword2, setViewerPassword2] = useState("");
   const [loading, setLoading] = useState(true);
@@ -88,7 +88,7 @@ export default function AdminBackupPage() {
     setPacks(data.migrationPacks || []);
     setStatus(data.status || null);
     setViewer(data.viewer || null);
-    setLegacySnapshots(data.legacySnapshots || []);
+    setNavrit2(data.navrit2 || null);
     setLoading(false);
   }, []);
 
@@ -297,13 +297,15 @@ export default function AdminBackupPage() {
         </>
       }
     >
-      {legacySnapshots.length > 0 ? (
+      {navrit2 ? (
         <div className="ad-card mb-4 p-4 text-sm">
-          <p className="font-semibold">Legacy snapshot saved</p>
+          <p className="font-semibold">NAVRIT 2.0 has its own database</p>
           <p className="ad-muted mt-1 text-xs">
-            A frozen copy of the PET and Plastic books was taken before NAVRIT 2.0 started
-            ({legacySnapshots[0].filename}, {new Date(legacySnapshots[0].createdAt).toLocaleString("en-IN")}). It is kept in the
-            data folder under <code>legacy/</code> and is never deleted automatically.
+            NAVRIT 2.0 data is stored in a separate file, <code>navrit2.db</code>, next to the PET and Plastic database. Every
+            DB snapshot and migration pack here also saves a copy of it.
+            {navrit2.backups[0]
+              ? ` Latest copy: ${navrit2.backups[0].filename} (${new Date(navrit2.backups[0].createdAt).toLocaleString("en-IN")}).`
+              : " No copy saved yet."}
           </p>
         </div>
       ) : null}

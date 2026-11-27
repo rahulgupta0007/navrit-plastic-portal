@@ -1,57 +1,9 @@
 import type { DatabaseSync } from "node:sqlite";
-import fs from "fs";
-import path from "path";
 
 /**
- * NAVRIT 2.0 tables. Everything here is prefixed `nv_` and is created with
- * CREATE ... IF NOT EXISTS only. Nothing in this file reads, alters or deletes
- * the legacy PET / Plastic tables (purchases, sales, sale_items, ...).
+ * NAVRIT 2.0 schema, applied only to the separate navrit2.db file (see business-db.ts).
+ * The PET / Plastic database is never opened from here.
  */
-
-function tableExists(db: DatabaseSync, name: string) {
-  const row = db
-    .prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name=?")
-    .get(name) as { ok: number } | undefined;
-  return !!row;
-}
-
-function legacyHasData(db: DatabaseSync) {
-  for (const table of ["purchases", "sales", "buyer_advances", "other_expenses"]) {
-    try {
-      if (!tableExists(db, table)) continue;
-      const row = db.prepare(`SELECT COUNT(*) AS c FROM ${table}`).get() as { c: number };
-      if (row.c > 0) return true;
-    } catch {
-      /* ignore */
-    }
-  }
-  return false;
-}
-
-/**
- * One-time frozen copy of the database taken right before the first NAVRIT 2.0
- * tables are created. Lives in <data dir>/legacy and is never pruned.
- */
-export function snapshotLegacyBeforeV2(db: DatabaseSync, dbFilePath: string) {
-  if (tableExists(db, "nv_parties")) return null;
-  if (!legacyHasData(db)) return null;
-
-  const dir = path.join(path.dirname(dbFilePath), "legacy");
-  fs.mkdirSync(dir, { recursive: true });
-  const existing = fs.readdirSync(dir).filter((f) => f.startsWith("legacy-snapshot-") && f.endsWith(".db"));
-  if (existing.length > 0) return null;
-
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dest = path.join(dir, `legacy-snapshot-${stamp}.db`);
-  try {
-    db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
-  } catch {
-    /* another connection may hold the WAL briefly */
-  }
-  db.prepare("VACUUM INTO ?").run(dest);
-  console.info(`[navrit] Legacy snapshot saved before NAVRIT 2.0: ${dest}`);
-  return dest;
-}
 
 export function ensureBusinessSchema(db: DatabaseSync) {
   db.exec(`
@@ -165,19 +117,4 @@ export function ensureBusinessSchema(db: DatabaseSync) {
     CREATE INDEX IF NOT EXISTS nv_cash_ref_idx ON nv_cash_ledger(ref_type, ref_id);
     CREATE INDEX IF NOT EXISTS nv_cash_date_idx ON nv_cash_ledger(entry_date, id);
   `);
-}
-
-export function listLegacySnapshots(dbFilePath: string) {
-  const dir = path.join(path.dirname(dbFilePath), "legacy");
-  try {
-    return fs
-      .readdirSync(dir)
-      .filter((f) => f.startsWith("legacy-snapshot-") && f.endsWith(".db"))
-      .map((filename) => {
-        const stat = fs.statSync(path.join(dir, filename));
-        return { filename, size: stat.size, createdAt: stat.mtime.toISOString() };
-      });
-  } catch {
-    return [];
-  }
 }

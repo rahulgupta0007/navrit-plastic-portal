@@ -10,7 +10,6 @@ import {
   tryRestoreDbFromBackups,
 } from "@/lib/data-paths";
 import { purgeDemoPollutionFromLiveDb } from "@/lib/purge-demo-pollution";
-import { ensureBusinessSchema, snapshotLegacyBeforeV2 } from "@/db/business-schema";
 
 // Production / Railway data MUST live on a persistent Volume (default /app/data).
 const dataDir = resolveDataDir();
@@ -941,19 +940,6 @@ function createDb() {
     }
   } catch (error) {
     console.warn("[navrit] View-only user sync skipped", error);
-  }
-  // NAVRIT 2.0: new nv_* tables only. A frozen copy of the legacy books is taken first.
-  try {
-    if (!memory) {
-      try {
-        snapshotLegacyBeforeV2(sqlite, dbPath);
-      } catch (error) {
-        console.warn("[navrit] Legacy snapshot skipped", error);
-      }
-    }
-    ensureBusinessSchema(sqlite);
-  } catch (error) {
-    console.warn("[navrit] NAVRIT 2.0 schema setup skipped", error);
   }
   // One-time cleanup of Demo* sample rows that leaked into the live ledger.
   // Real vendors/workers/purchases are not matched by these patterns.

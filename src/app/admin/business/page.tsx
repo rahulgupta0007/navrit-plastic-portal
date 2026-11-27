@@ -17,7 +17,6 @@ type Summary = {
   check: { balanced: boolean; difference: number };
   recentSales: Sale[];
   counts: { purchases: number; sales: number };
-  legacy: { purchases: number; sales: number; purchaseAmount: number; saleAmount: number };
 };
 
 export default function BusinessHomePage() {
@@ -46,7 +45,7 @@ export default function BusinessHomePage() {
       {data ? (
         <div className="space-y-5">
           {data.counts.purchases === 0 && data.counts.sales === 0 && data.capital.equity === 0 ? (
-            <Section title="Start your new book" subtitle="NAVRIT 2.0 starts at zero. Your old PET and Plastic books are untouched under Previous Books.">
+            <Section title="Start your new book" subtitle="NAVRIT 2.0 starts at zero. Your old PET and Plastic books stay separate under Previous Books.">
               <ol className="space-y-2 text-sm">
                 <li>
                   <Link href="/admin/business/investment" className="text-[var(--ad-accent)] underline">1. Add the new investment</Link> (capital that came into the business).
@@ -117,19 +116,10 @@ export default function BusinessHomePage() {
             <ErrorBox message={`Books are out of balance by ${inr(data.check.difference, 2)}. Open Accounts for details.`} />
           ) : null}
 
-          <Section title="Previous books (for reference)" subtitle="Read from your old PET and Plastic records. Nothing here is changed by NAVRIT 2.0.">
-            <div className="flex flex-wrap items-center gap-x-8 gap-y-2 text-sm">
-              <p>
-                <span className="text-[var(--ad-muted)]">Old purchases:</span> <strong>{data.legacy.purchases}</strong> entries, {inr(data.legacy.purchaseAmount)}
-              </p>
-              <p>
-                <span className="text-[var(--ad-muted)]">Old sales:</span> <strong>{data.legacy.sales}</strong> entries, {inr(data.legacy.saleAmount)}
-              </p>
-              <Link href="/admin" className="inline-flex items-center gap-1 text-[var(--ad-accent)]">
-                Open previous books <ArrowRight size={12} />
-              </Link>
-            </div>
-          </Section>
+          <p className="text-xs text-[var(--ad-muted)]">
+            NAVRIT 2.0 keeps its own separate database. Your old PET and Plastic records are not mixed in; open them any time from{" "}
+            <Link href="/admin" className="text-[var(--ad-accent)] underline">Previous Books</Link>.
+          </p>
         </div>
       ) : null}
     </AdminShell>

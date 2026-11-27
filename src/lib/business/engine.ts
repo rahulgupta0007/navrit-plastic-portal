@@ -1,4 +1,4 @@
-import { sqlite } from "@/db";
+import { bizDb as sqlite } from "@/db/business-db";
 import { allocateByKg, r2 } from "@/lib/business/math";
 
 export { allocateByKg, r2 };
@@ -841,22 +841,5 @@ export function getSummary() {
       purchases: num(one("SELECT COUNT(*) AS c FROM nv_purchases")?.c),
       sales: num(one("SELECT COUNT(*) AS c FROM nv_sales")?.c),
     },
-  };
-}
-
-/** Read-only look at the legacy books for the optional combined card. */
-export function getLegacyTotals() {
-  const safe = (sql: string) => {
-    try {
-      return num(one(sql)?.t);
-    } catch {
-      return 0;
-    }
-  };
-  return {
-    purchases: safe("SELECT COUNT(*) AS t FROM purchases"),
-    sales: safe("SELECT COUNT(*) AS t FROM sales"),
-    purchaseAmount: r2(safe("SELECT COALESCE(SUM(total_amount),0) AS t FROM purchases")),
-    saleAmount: r2(safe("SELECT COALESCE(SUM(total_amount),0) AS t FROM sales")),
   };
 }

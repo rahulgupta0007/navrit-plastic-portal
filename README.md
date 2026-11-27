@@ -39,8 +39,9 @@ Default login (from `.env.local`): `admin` / `admin123`
 - Buy: one entry per trip, transport/loading shared across materials by kg (landed cost per kg), FIFO stock lots
 - Sell: live real profit from FIFO landed cost, optional GST (5/12/18/custom, excluded from profit)
 - Investment (capital, loans, withdrawals) kept separate from operating cash and profit; Accounts shows a balance check
-- Uses only new `nv_*` tables. The PET / Plastic books below are untouched and stay under **Previous Books**
-- A frozen copy of the old books is written once to `<data dir>/legacy/` before the first 2.0 tables are created and is never pruned
+- Own database: `navrit2.db` (set `NAVRIT2_DB_PATH` to move it), fresh and separate from `plastic-rates.db`. It is never mixed with the old data
+- The PET / Plastic books stay exactly as they were under **Previous Books**; the sidebar switch at the top flips between the two
+- DB snapshots and migration packs in Backup also save `navrit2.db` (as `navrit2-*.db` / inside the zip)
 - `npm run test:business` runs the invest, buy, sell, edit, delete regression on an in-memory DB
 
 ### Previous Books (dual modes: PET / PLASTIC)

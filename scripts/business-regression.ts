@@ -7,13 +7,6 @@ async function main() {
   const { sqlite } = await import("../src/db");
   const e = await import("../src/lib/business/engine");
 
-  const legacyBefore = JSON.stringify(
-    ["purchases", "sales", "buyer_advances", "other_expenses"].map((t) => [
-      t,
-      (sqlite.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get() as { c: number }).c,
-    ])
-  );
-
   e.addInvestment({ date: "2026-11-20", investor: "Rahul", amount: 100000, kind: "equity" });
   e.addInvestment({ date: "2026-11-20", investor: "Bank", amount: 20000, kind: "loan" });
 
@@ -98,13 +91,10 @@ async function main() {
   assert.equal(e.getStock().totalKg, 0);
   assert.ok(e.getSummary().check.balanced);
 
-  const legacyAfter = JSON.stringify(
-    ["purchases", "sales", "buyer_advances", "other_expenses"].map((t) => [
-      t,
-      (sqlite.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get() as { c: number }).c,
-    ])
-  );
-  assert.equal(legacyAfter, legacyBefore, "legacy tables must be untouched");
+  const leaked = sqlite
+    .prepare("SELECT COUNT(*) AS c FROM sqlite_master WHERE name LIKE 'nv\\_%' ESCAPE '\\'")
+    .get() as { c: number };
+  assert.equal(leaked.c, 0, "NAVRIT 2.0 tables must not exist in the old database");
   console.log("business regression: OK");
 }
 

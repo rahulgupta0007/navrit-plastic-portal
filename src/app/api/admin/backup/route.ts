@@ -19,8 +19,7 @@ import {
   envSnapshotToDotEnv,
   buildEnvSnapshot,
 } from "@/lib/migration-pack";
-import { listLegacySnapshots } from "@/db/business-schema";
-import { DB_FILE } from "@/lib/backup";
+import { BIZ_DB_FILE, listBizBackups } from "@/db/business-db";
 import { getViewerStatus, setViewerPassword } from "@/lib/viewer-user";
 
 export const dynamic = "force-dynamic";
@@ -108,7 +107,7 @@ export async function GET(req: NextRequest) {
     migrationPacks: listMigrationPacks(),
     status: getMigrationStatus(),
     viewer: getViewerStatus(),
-    legacySnapshots: listLegacySnapshots(DB_FILE),
+    navrit2: { file: BIZ_DB_FILE, backups: listBizBackups().slice(0, 5) },
   });
 }
 
