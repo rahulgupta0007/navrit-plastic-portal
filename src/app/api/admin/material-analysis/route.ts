@@ -48,7 +48,7 @@ export async function GET(req: NextRequest) {
   `).all(mode,from,to) as any[];
 
   const sales = sqlite.prepare(`
-    SELECT id, customer_name, quantity_kg, total_amount, gross_amount, labour_charges, loading_charges, sale_date
+    SELECT id, customer_name, quantity_kg, total_amount, gross_amount, labour_charges, loading_charges, COALESCE(transport_charges,0) as transport_charges, sale_date
     FROM sales WHERE mode=? AND sale_date BETWEEN ? AND ? ORDER BY sale_date DESC, id DESC
   `).all(mode,from,to) as any[];
 
@@ -98,7 +98,7 @@ export async function GET(req: NextRequest) {
   const wasteKg = batches.reduce((s,x)=>s+n(x.waste_kg),0);
   const soldKg = sales.reduce((s,x)=>s+n(x.quantity_kg),0);
   const revenue = sales.reduce((s,x)=>s+n(x.total_amount),0);
-  const saleDirectCost = sales.reduce((s,x)=>s+n(x.labour_charges)+n(x.loading_charges),0);
+  const saleDirectCost = sales.reduce((s,x)=>s+n(x.labour_charges)+n(x.loading_charges)+n(x.transport_charges),0);
   const processingCost = batches.reduce((s,x)=>s+n(x.labour_cost)+n(x.processing_cost),0);
 
   const processingOtherExpenses = otherExpenses.filter(x=>x.expense_type==="Electricity" || x.expense_type==="Thread");

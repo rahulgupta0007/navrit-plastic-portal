@@ -232,7 +232,6 @@ function repairDupes(mode) {
     `).all(mode, supplier.id);
     let need = Math.max(0, Math.round((target - linkedSum) * 100) / 100);
     for (const orphan of orphans) {
-      const amt = Number(orphan.amount);
       if (need <= 0.005) {
         db.prepare("DELETE FROM vendor_payments WHERE id=?").run(orphan.id);
         deleted += 1;

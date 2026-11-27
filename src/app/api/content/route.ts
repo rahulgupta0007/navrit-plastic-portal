@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import { getSession, requireWriteSession } from "@/lib/auth";
+import { requireWriteSession } from "@/lib/auth";
 import { getSiteContent, updateSiteContent } from "@/lib/content";
 
 export const dynamic = "force-dynamic";
