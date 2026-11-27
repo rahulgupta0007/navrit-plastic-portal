@@ -17,7 +17,8 @@
     "db:restore:list": "tsx scripts/db-restore.ts --list",
     "deploy:safe": "tsx scripts/deploy-safe.ts",
     "typecheck": "tsc --noEmit",
-    "test:inventory": "node scripts/inventory-regression.mjs"
+    "test:inventory": "node scripts/inventory-regression.mjs",
+    "test:business": "tsx scripts/business-regression.ts"
   },
   "dependencies": {
     "bcryptjs": "^3.0.2",

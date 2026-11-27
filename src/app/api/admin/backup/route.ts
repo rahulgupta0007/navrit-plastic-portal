@@ -19,6 +19,8 @@ import {
   envSnapshotToDotEnv,
   buildEnvSnapshot,
 } from "@/lib/migration-pack";
+import { listLegacySnapshots } from "@/db/business-schema";
+import { DB_FILE } from "@/lib/backup";
 import { getViewerStatus, setViewerPassword } from "@/lib/viewer-user";
 
 export const dynamic = "force-dynamic";
@@ -106,6 +108,7 @@ export async function GET(req: NextRequest) {
     migrationPacks: listMigrationPacks(),
     status: getMigrationStatus(),
     viewer: getViewerStatus(),
+    legacySnapshots: listLegacySnapshots(DB_FILE),
   });
 }
 

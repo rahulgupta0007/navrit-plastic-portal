@@ -66,6 +66,7 @@ export default function AdminBackupPage() {
   const [packs, setPacks] = useState<PackRow[]>([]);
   const [status, setStatus] = useState<Status | null>(null);
   const [viewer, setViewer] = useState<ViewerStatus | null>(null);
+  const [legacySnapshots, setLegacySnapshots] = useState<Array<{ filename: string; createdAt: string }>>([]);
   const [viewerPassword, setViewerPassword] = useState("");
   const [viewerPassword2, setViewerPassword2] = useState("");
   const [loading, setLoading] = useState(true);
@@ -87,6 +88,7 @@ export default function AdminBackupPage() {
     setPacks(data.migrationPacks || []);
     setStatus(data.status || null);
     setViewer(data.viewer || null);
+    setLegacySnapshots(data.legacySnapshots || []);
     setLoading(false);
   }, []);
 
@@ -295,6 +297,16 @@ export default function AdminBackupPage() {
         </>
       }
     >
+      {legacySnapshots.length > 0 ? (
+        <div className="ad-card mb-4 p-4 text-sm">
+          <p className="font-semibold">Legacy snapshot saved</p>
+          <p className="ad-muted mt-1 text-xs">
+            A frozen copy of the PET and Plastic books was taken before NAVRIT 2.0 started
+            ({legacySnapshots[0].filename}, {new Date(legacySnapshots[0].createdAt).toLocaleString("en-IN")}). It is kept in the
+            data folder under <code>legacy/</code> and is never deleted automatically.
+          </p>
+        </div>
+      ) : null}
       {status?.looksEmpty || status?.emptyWarning ? (
         <div className="ad-card mb-4 border border-red-500/40 bg-red-500/10 p-4 text-sm">
           <p className="font-semibold text-red-300">Data looks empty after deploy</p>

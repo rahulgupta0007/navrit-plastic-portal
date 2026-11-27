@@ -34,7 +34,16 @@ Default login (from `.env.local`): `admin` / `admin123`
 - About & Contact pages remain available
 - Home `/` currently redirects to admin login (internal ops app first)
 
-### Admin (dual modes: PET / PLASTIC)
+### NAVRIT 2.0 (primary workspace, `/admin/business`)
+- One business, one cash book, one party directory; PET and Plastic are just material tags
+- Buy: one entry per trip, transport/loading shared across materials by kg (landed cost per kg), FIFO stock lots
+- Sell: live real profit from FIFO landed cost, optional GST (5/12/18/custom, excluded from profit)
+- Investment (capital, loans, withdrawals) kept separate from operating cash and profit; Accounts shows a balance check
+- Uses only new `nv_*` tables. The PET / Plastic books below are untouched and stay under **Previous Books**
+- A frozen copy of the old books is written once to `<data dir>/legacy/` before the first 2.0 tables are created and is never pruned
+- `npm run test:business` runs the invest, buy, sell, edit, delete regression on an in-memory DB
+
+### Previous Books (dual modes: PET / PLASTIC)
 - Secure login; mode toggle isolates every ledger row
 - Inventory & finance: purchases, sales, expenses, borrowings, vendor credit/advances
 - Labour management: attendance (full/half/custom hours), wage vs advance, editable entries
@@ -226,3 +235,4 @@ Cron daily backup (optional):
 | `npm run db:backup` | Create DB backup |
 | `npm run db:restore` | Restore from backup |
 | `npm run deploy:safe` | Backup + install + build |
+| `npm run test:business` | NAVRIT 2.0 engine regression (in-memory DB) |
