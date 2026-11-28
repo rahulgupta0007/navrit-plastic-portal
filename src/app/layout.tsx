@@ -17,7 +17,7 @@ const jakarta = Plus_Jakarta_Sans({
   display: "swap",
 });
 
-const businessName = process.env.NEXT_PUBLIC_BUSINESS_NAME || "NAVRIT";
+const businessName = "NAVRIT 2.0";
 const tagline =
   process.env.NEXT_PUBLIC_BUSINESS_TAGLINE || "Turning Waste into Value.";
 

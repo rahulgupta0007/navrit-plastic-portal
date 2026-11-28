@@ -78,7 +78,7 @@ export function NaviFloat() {
               <p className="flex items-center gap-1 text-sm font-semibold">
                 Navi <Sparkles size={12} className="text-[#7C3AED]" />
               </p>
-              <p className="ad-muted text-[10px]">Your Navrit buddy</p>
+              <p className="ad-muted text-[10px]">Your NAVRIT 2.0 buddy</p>
             </div>
             <button type="button" className="ad-btn ad-btn-ghost !px-2 !py-1" onClick={() => setOpen(false)} aria-label="Close Navi">
               <X size={16} />

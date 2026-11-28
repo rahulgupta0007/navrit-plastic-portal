@@ -5,7 +5,7 @@ export const defaultLocale: Locale = "en";
 
 export const dictionary = {
   en: {
-    brand: "NAVRIT",
+    brand: "NAVRIT 2.0",
     tagline: "Turning Waste into Value.",
     todaysRates: "Today's Plastic Purchase Rates",
     navHome: "Rates",
@@ -90,7 +90,7 @@ export const dictionary = {
     status: "Status",
     actions: "Actions",
     ratesUpdated: "Today's rates updated",
-    footerNote: "NAVRIT — Turning Waste into Value.",
+    footerNote: "NAVRIT 2.0 — Turning Waste into Value.",
     missionText:
       "We transform overlooked waste into valuable resources. By collecting and refining raw discarded materials, we deliver high-quality, sustainable products while contributing to a cleaner environment.",
     visionText:
@@ -122,7 +122,7 @@ export const dictionary = {
     kg: "₹/kg",
   },
   hi: {
-    brand: "NAVRIT",
+    brand: "NAVRIT 2.0",
     tagline: "कचरे को मूल्य में बदलना।",
     todaysRates: "आज के प्लास्टिक खरीद रेट",
     navHome: "रेट",
@@ -207,7 +207,7 @@ export const dictionary = {
     status: "स्थिति",
     actions: "कार्रवाई",
     ratesUpdated: "आज के रेट अपडेट हो गए",
-    footerNote: "NAVRIT — कचरे को मूल्य में बदलना।",
+    footerNote: "NAVRIT 2.0 — कचरे को मूल्य में बदलना।",
     missionText:
       "हम नज़रअंदाज़ कचरे को मूल्यवान संसाधनों में बदलते हैं। कच्चे त्यागे गए पदार्थों को एकत्र और परिष्कृत कर, हम उच्च गुणवत्ता वाले, टिकाऊ उत्पाद देते हैं और स्वच्छ पर्यावरण में योगदान करते हैं।",
     visionText:

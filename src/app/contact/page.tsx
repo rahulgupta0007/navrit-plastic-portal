@@ -22,7 +22,7 @@ export default function ContactPage() {
   const address = process.env.NEXT_PUBLIC_ADDRESS || "";
   const hours = process.env.NEXT_PUBLIC_BUSINESS_HOURS || "";
   const mapUrl = process.env.NEXT_PUBLIC_MAPS_EMBED_URL || "";
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
   const mapsLink = process.env.NEXT_PUBLIC_MAPS_LINK || "";
 
   const faqs = [

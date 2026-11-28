@@ -13,7 +13,7 @@ export function AboutClient({
   address: string;
 }) {
   const { locale, dict } = useLocale();
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
   const tagline = process.env.NEXT_PUBLIC_BUSINESS_TAGLINE || dict.tagline;
   const lang = locale === "hi" ? "hi" : "en";
 

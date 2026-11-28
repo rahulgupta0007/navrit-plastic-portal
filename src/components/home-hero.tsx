@@ -20,7 +20,7 @@ type Props = {
 
 export function HomeHero({ date, ratesAsOf, rows, stats }: Props) {
   const { locale, dict } = useLocale();
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
 
   // Parse as calendar date (noon local) so IST "today" doesn't shift by timezone
   const formatted = new Date(date + "T12:00:00").toLocaleDateString(

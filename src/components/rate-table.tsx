@@ -80,7 +80,7 @@ export function RateTable({ rows, date, lastUpdated }: Props) {
     downloadRatesPdf({
       title: dict.todaysRates,
       date,
-      business: process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand,
+      business: dict.brand,
       locale,
       rows: filtered,
       labels: {

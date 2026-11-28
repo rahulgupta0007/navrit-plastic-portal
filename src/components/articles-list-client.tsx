@@ -7,7 +7,7 @@ import { ArrowRight, Clock, Bookmark } from "lucide-react";
 
 export function ArticlesListClient({ articles }: { articles: Article[] }) {
   const { locale, dict } = useLocale();
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
 
   return (
     <div>

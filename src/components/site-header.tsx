@@ -21,7 +21,7 @@ export function SiteHeader() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);

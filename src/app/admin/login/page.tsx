@@ -9,7 +9,7 @@ import clsx from "clsx";
 export default function AdminLoginPage() {
   const { dict, locale, setLocale } = useLocale();
   const router = useRouter();
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
   const tagline = process.env.NEXT_PUBLIC_BUSINESS_TAGLINE || dict.tagline;
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");

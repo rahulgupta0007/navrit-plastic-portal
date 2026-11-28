@@ -222,7 +222,7 @@ export function AdminShell({
               N
             </span>
             <div>
-              <p className="text-sm font-bold tracking-tight">NAVRIT</p>
+              <p className="text-sm font-bold tracking-tight">NAVRIT 2.0</p>
               <p className="text-[10px] uppercase tracking-wider text-[var(--ad-muted)]">
                 {role === "readonly" ? "View only" : "Admin"}
               </p>
@@ -259,7 +259,7 @@ export function AdminShell({
             />
             <aside className="ad-sidebar absolute inset-y-0 left-0 flex w-64 flex-col">
               <div className="flex items-center justify-between px-4 py-4">
-                <p className="font-bold">NAVRIT {role === "readonly" ? "View" : "Admin"}</p>
+                <p className="font-bold">NAVRIT 2.0 {role === "readonly" ? "View" : "Admin"}</p>
                 <button type="button" onClick={() => setSidebarOpen(false)}>
                   <X size={18} />
                 </button>

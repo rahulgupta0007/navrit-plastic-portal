@@ -7,7 +7,7 @@ import { useLocale } from "./locale-provider";
 export function SiteFooter() {
   const { dict } = useLocale();
   const pathname = usePathname();
-  const brand = process.env.NEXT_PUBLIC_BUSINESS_NAME || dict.brand;
+  const brand = dict.brand;
   const tagline = process.env.NEXT_PUBLIC_BUSINESS_TAGLINE || dict.tagline;
 
   if (pathname.startsWith("/admin")) return null;
