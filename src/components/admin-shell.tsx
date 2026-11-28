@@ -24,31 +24,12 @@ import {
   Factory,
   Cog,
   Eye,
-  Home,
-  ShoppingCart,
-  Receipt,
-  Boxes,
-  Landmark,
 } from "lucide-react";
 import { NaviFloat } from "@/components/navi-float";
 import { NaviNavIcon } from "@/components/navi-logo";
 import "@/app/admin-theme.css";
 
-type NavItem = { href: string; label: string; icon: React.ComponentType<{ size?: number }> };
-
-const BUSINESS_HOME = "/admin/business";
-
-const v2Nav: NavItem[] = [
-  { href: BUSINESS_HOME, label: "Home", icon: Home },
-  { href: "/admin/business/buy", label: "Buy", icon: ShoppingCart },
-  { href: "/admin/business/sell", label: "Sell", icon: Receipt },
-  { href: "/admin/business/stock", label: "Stock", icon: Boxes },
-  { href: "/admin/business/parties", label: "Parties", icon: Users },
-  { href: "/admin/business/investment", label: "Investment", icon: Landmark },
-  { href: "/admin/business/accounts", label: "Accounts", icon: WalletCards },
-];
-
-const previousBooksNav = {
+const navByMode = {
   PET: [
     { href: "/admin", label: "PET Dashboard", icon: LayoutDashboard },
     { href: "/admin/inventory", label: "PET Inventory", icon: Package },
@@ -57,6 +38,8 @@ const previousBooksNav = {
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/machines", label: "Machine & Setup", icon: Cog },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
+    { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
   PLASTIC: [
     { href: "/admin", label: "Plastic Dashboard", icon: LayoutDashboard },
@@ -66,18 +49,10 @@ const previousBooksNav = {
     { href: "/admin/accounts", label: "Accounts & Finance", icon: WalletCards },
     { href: "/admin/machines", label: "Machine & Setup", icon: Cog },
     { href: "/admin/processing", label: "Labour Management", icon: Factory },
+    { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
+    { href: "/admin/backup", label: "Backup", icon: HardDrive },
   ],
-} as const satisfies Record<string, readonly NavItem[]>;
-
-const toolsNav: NavItem[] = [
-  { href: "/admin/assistant", label: "Navi AI", icon: NaviNavIcon },
-  { href: "/admin/backup", label: "Backup", icon: HardDrive },
-];
-
-function isActive(pathname: string, href: string) {
-  if (href === "/admin" || href === BUSINESS_HOME) return pathname === href;
-  return pathname === href || pathname.startsWith(href + "/");
-}
+} as const;
 
 type Toast = { id: number; text: string };
 
@@ -118,32 +93,11 @@ export function AdminShell({
   const [role, setRole] = useState<"admin" | "readonly">("admin");
 
   const owner = sessionUser || process.env.NEXT_PUBLIC_OWNER_NAME || username || "Admin";
-  const [toolSpace, setToolSpace] = useState<"v2" | "old">("v2");
-  const isV2Page = pathname.startsWith(BUSINESS_HOME);
-  const isToolPage = toolsNav.some((t) => isActive(pathname, t.href));
-  const space: "v2" | "old" = isV2Page ? "v2" : isToolPage ? toolSpace : "old";
-  const bookNav = previousBooksNav[mode];
-  const tools = useMemo(
-    () => (canWrite ? toolsNav : toolsNav.filter((n) => n.href !== "/admin/backup")),
-    [canWrite]
+  const navAll = navByMode[mode];
+  const nav = useMemo(
+    () => (canWrite ? [...navAll] : navAll.filter((n) => n.href !== "/admin/backup")),
+    [navAll, canWrite]
   );
-  const nav = useMemo<NavItem[]>(
-    () => [...v2Nav, ...bookNav, ...tools],
-    [bookNav, tools]
-  );
-  const onPreviousBook = space === "old";
-
-  useEffect(() => {
-    if (isV2Page) {
-      setToolSpace("v2");
-      localStorage.setItem("navrit-space", "v2");
-    } else if (!isToolPage) {
-      setToolSpace("old");
-      localStorage.setItem("navrit-space", "old");
-    } else {
-      setToolSpace(localStorage.getItem("navrit-space") === "old" ? "old" : "v2");
-    }
-  }, [isV2Page, isToolPage]);
 
   useEffect(() => {
     const saved = localStorage.getItem("navrit-admin-theme");
@@ -234,7 +188,9 @@ export function AdminShell({
   }
 
   const crumbs = useMemo(() => {
-    const item = nav.find((n) => isActive(pathname, n.href));
+    const item = nav.find(
+      (n) => n.href === pathname || (n.href !== "/admin" && pathname.startsWith(n.href))
+    );
     return item?.label || "Admin";
   }, [pathname, nav]);
 
@@ -254,85 +210,6 @@ export function AdminShell({
     return () => window.removeEventListener("admin-toast", onToast);
   }, []);
 
-  function renderNav(onNavigate?: () => void) {
-    const link = (item: NavItem) => (
-      <Link
-        key={item.href}
-        href={item.href}
-        data-active={isActive(pathname, item.href)}
-        className="ad-nav-item"
-        onClick={onNavigate}
-      >
-        <item.icon size={16} />
-        {item.label}
-      </Link>
-    );
-    return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-1 rounded-xl border border-[var(--ad-border)] p-1 text-[11px] font-bold">
-          <Link
-            href={BUSINESS_HOME}
-            onClick={onNavigate}
-            className={clsx(
-              "rounded-lg px-2 py-2 text-center",
-              space === "v2" ? "bg-[var(--ad-accent)] text-[#052e16]" : "text-[var(--ad-muted)] hover:text-[var(--ad-text)]"
-            )}
-          >
-            NAVRIT 2.0
-          </Link>
-          <Link
-            href="/admin"
-            onClick={onNavigate}
-            className={clsx(
-              "rounded-lg px-2 py-2 text-center",
-              space === "old" ? "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]" : "text-[var(--ad-muted)] hover:text-[var(--ad-text)]"
-            )}
-          >
-            Previous Books
-          </Link>
-        </div>
-
-        {space === "v2" ? (
-          <div className="space-y-0.5">
-            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-accent)]">
-              New book - fresh start
-            </p>
-            {v2Nav.map(link)}
-          </div>
-        ) : (
-          <div className="space-y-0.5">
-            <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
-              Old PET and Plastic data
-            </p>
-            <div className="mx-3 mb-1 flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
-              {(["PET", "PLASTIC"] as const).map((m) => (
-                <button
-                  key={m}
-                  type="button"
-                  onClick={() => setMode(m)}
-                  className={clsx(
-                    "flex-1 px-2 py-1.5",
-                    mode === m && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]"
-                  )}
-                >
-                  {m === "PET" ? "PET book" : "Plastic book"}
-                </button>
-              ))}
-            </div>
-            {bookNav.map(link)}
-          </div>
-        )}
-
-        <div className="space-y-0.5">
-          <p className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--ad-muted)]">
-            Tools
-          </p>
-          {tools.map(link)}
-        </div>
-      </div>
-    );
-  }
-
   const headerActions = canWrite ? actions : null;
   const displayName = role === "readonly" ? sessionUser || "Viewer" : owner.split(" ")[0];
 
@@ -351,8 +228,18 @@ export function AdminShell({
               </p>
             </div>
           </div>
-          <nav className="flex-1 overflow-y-auto px-2.5 pb-4">
-            {renderNav()}
+          <nav className="flex-1 space-y-0.5 px-2.5 pb-4">
+            {nav.map((item) => {
+              const active =
+                pathname === item.href ||
+                (item.href !== "/admin" && pathname.startsWith(item.href));
+              return (
+                <Link key={item.href} href={item.href} data-active={active} className="ad-nav-item">
+                  <item.icon size={16} />
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
           <div className="space-y-1 border-t border-[var(--ad-border)] p-2.5">
             <button type="button" onClick={logout} className="ad-nav-item w-full text-left">
@@ -377,8 +264,18 @@ export function AdminShell({
                   <X size={18} />
                 </button>
               </div>
-              <nav className="flex-1 overflow-y-auto px-2.5 pb-4">
-                {renderNav(() => setSidebarOpen(false))}
+              <nav className="flex-1 space-y-0.5 px-2.5">
+                {nav.map((item) => (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    className="ad-nav-item"
+                    onClick={() => setSidebarOpen(false)}
+                  >
+                    <item.icon size={16} />
+                    {item.label}
+                  </Link>
+                ))}
               </nav>
             </aside>
           </div>
@@ -400,15 +297,6 @@ export function AdminShell({
                   {role === "readonly" ? "View" : "Admin"} /{" "}
                   <span className="text-[var(--ad-text)]">{crumbs}</span>
                 </p>
-                {onPreviousBook ? (
-                  <p className="mt-0.5 inline-flex rounded bg-[var(--ad-accent-dim)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[var(--ad-accent)]">
-                    Previous Book - {mode === "PET" ? "PET" : "Plastic"}
-                  </p>
-                ) : (
-                  <p className="mt-0.5 inline-flex rounded bg-[var(--ad-accent)] px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-[#052e16]">
-                    NAVRIT 2.0
-                  </p>
-                )}
               </div>
 
               <button
@@ -424,6 +312,22 @@ export function AdminShell({
               </button>
 
               <div className="flex items-center gap-1.5">
+                <div className="flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
+                  <button
+                    type="button"
+                    onClick={() => setMode("PET")}
+                    className={clsx("px-2 py-1.5", mode === "PET" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
+                  >
+                    PET
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setMode("PLASTIC")}
+                    className={clsx("px-2 py-1.5", mode === "PLASTIC" && "bg-[var(--ad-accent-dim)] text-[var(--ad-accent)]")}
+                  >
+                    Plastic
+                  </button>
+                </div>
                 <div className="flex overflow-hidden rounded-lg border border-[var(--ad-border)] text-[10px] font-bold">
                   <button
                     type="button"

@@ -3,7 +3,6 @@ import path from "path";
 import crypto from "crypto";
 import { DatabaseSync } from "node:sqlite";
 import { closeDb } from "@/db";
-import { createBizBackup } from "@/db/business-db";
 import {
   assertPersistentDataDir,
   resolveBackupDir,
@@ -66,11 +65,6 @@ export function createBackup(reason = "manual"): BackupInfo {
   fs.writeFileSync(metaPath, `${checksum}  ${filename}\n`, "utf8");
 
   pruneOldBackups();
-  try {
-    createBizBackup(reason);
-  } catch (error) {
-    console.warn("[navrit] NAVRIT 2.0 backup skipped", error);
-  }
 
   const stat = fs.statSync(dest);
   return {

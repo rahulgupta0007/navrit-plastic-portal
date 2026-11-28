@@ -31,7 +31,7 @@ export default function AdminLoginPage() {
       setError(dict.loginError);
       return;
     }
-    router.push("/admin/business");
+    router.push("/admin");
     router.refresh();
   }
 

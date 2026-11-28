@@ -4,7 +4,6 @@ import crypto from "crypto";
 import { DatabaseSync } from "node:sqlite";
 import JSZip from "jszip";
 import { closeDb } from "@/db";
-import { BIZ_DB_FILE, closeBizDb } from "@/db/business-db";
 import { BACKUP_DIR, DATA_DIR, DB_FILE, createBackup, formatBytes } from "@/lib/backup";
 import {
   assertPersistentDataDir,
@@ -259,21 +258,6 @@ export async function createMigrationPackBuffer(): Promise<{
   const zip = new JSZip();
   zip.file("plastic-rates.db", dbBuf);
   zip.file("plastic-rates.db.sha256", `${backup.checksum}  plastic-rates.db\n`);
-  if (fs.existsSync(BIZ_DB_FILE)) {
-    const bizTmp = path.join(BACKUP_DIR, `navrit2-export-${stamp()}.db`);
-    try {
-      const bizBackup = new DatabaseSync(BIZ_DB_FILE);
-      try {
-        bizBackup.exec("PRAGMA wal_checkpoint(TRUNCATE);");
-        bizBackup.prepare("VACUUM INTO ?").run(bizTmp);
-      } finally {
-        bizBackup.close();
-      }
-      zip.file("navrit2.db", fs.readFileSync(bizTmp));
-    } finally {
-      if (fs.existsSync(bizTmp)) fs.unlinkSync(bizTmp);
-    }
-  }
   zip.file("railway-variables.env", envSnapshotToDotEnv(envVars));
   zip.file("manifest.json", JSON.stringify(meta, null, 2));
   zip.file("README-MIGRATE.md", readme);
@@ -382,23 +366,11 @@ export async function importMigrationPackBuffer(buf: Buffer) {
   const zip = await JSZip.loadAsync(buf);
   const dbEntry =
     zip.file("plastic-rates.db") ||
-    Object.values(zip.files).find((f) => !f.dir && f.name.endsWith(".db") && !f.name.includes("/") && f.name !== "navrit2.db");
+    Object.values(zip.files).find((f) => !f.dir && f.name.endsWith(".db") && !f.name.includes("/"));
   if (!dbEntry) throw new Error("Migration pack missing plastic-rates.db");
 
   const dbBuf = Buffer.from(await dbEntry.async("nodebuffer"));
   const result = importDatabaseBuffer(dbBuf, "pack");
-
-  const bizEntry = zip.file("navrit2.db");
-  if (bizEntry) {
-    const bizBuf = Buffer.from(await bizEntry.async("nodebuffer"));
-    if (bizBuf.subarray(0, 16).toString("utf8").startsWith("SQLite format 3")) {
-      closeBizDb();
-      for (const suffix of ["", "-wal", "-shm"]) {
-        if (fs.existsSync(BIZ_DB_FILE + suffix)) fs.unlinkSync(BIZ_DB_FILE + suffix);
-      }
-      fs.writeFileSync(BIZ_DB_FILE, bizBuf);
-    }
-  }
 
   let envText = "";
   const envEntry = zip.file("railway-variables.env");
